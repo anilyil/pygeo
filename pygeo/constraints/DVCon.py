@@ -893,11 +893,18 @@ class DVConstraints:
         """
         self._checkDVGeo(DVGeoName)
 
-        # Create mesh of intersections
-        constr_line = Curve(X=leList, k=2)
-        s = np.linspace(0, 1, nSpan)
-        X = constr_line(s)
-        coords = np.zeros((nSpan, 3, 3))
+        if nSpan > 1:
+            # Create mesh of intersections
+            constr_line = Curve(X=leList, k=2)
+            s = np.linspace(0, 1, nSpan)
+            X = constr_line(s)
+            coords = np.zeros((nSpan, 3, 3))
+        else:
+            coords = np.zeros((1, 3, 3))
+            X = np.zeros((1, 3))
+            X[0] = np.array(leList[0]).copy()
+            coords[0, 0, :] = np.array(leList[0])
+
         p0, p1, p2 = self._getSurfaceVertices(surfaceName=surfaceName)
         # Project all the points
         for i in range(nSpan):
