@@ -1,9 +1,90 @@
 # External modules
 import numpy as np
 
-# --------------------------------------------------------------
-#             Truly Miscellaneous Functions
-# --------------------------------------------------------------
+
+class KSfunction(object):
+    """
+    Helper class for KSComp.
+
+    Helper class that can be used to aggregate constraint vectors with a
+    Kreisselmeier-Steinhauser Function.
+
+    This is taken from OpenMDAO here: https://github.com/OpenMDAO/OpenMDAO/blob/master/openmdao/components/ks_comp.py
+    """
+
+    @staticmethod
+    def _compute_values(g, rho):
+        """
+        Compute values needed by the KS function for the given array of constraints.
+
+        Parameters
+        ----------
+        g : ndarray
+            Array of constraint values, where negative means satisfied and positive means violated.
+        rho : float
+            Constraint Aggregation Factor.
+
+        Returns
+        -------
+        tuple
+            g_max, g_diff, exponents and summation as needed by compute and derivates functions.
+        """
+        g_max = np.max(np.atleast_2d(g), axis=-1)[:, np.newaxis]
+        g_diff = g - g_max
+        exponents = np.exp(rho * g_diff)
+        summation = np.sum(exponents, axis=-1)[:, np.newaxis]
+        return g_max, g_diff, exponents, summation
+
+    @staticmethod
+    def compute(g, rho=50.0):
+        """
+        Compute the value of the KS function for the given array of constraints.
+
+        Parameters
+        ----------
+        g : ndarray
+            Array of constraint values, where negative means satisfied and positive means violated.
+        rho : float
+            Constraint Aggregation Factor.
+
+        Returns
+        -------
+        float
+            Value of KS function.
+        """
+        g_max, g_diff, exponents, summation = KSfunction._compute_values(g, rho)
+
+        KS = g_max + 1.0 / rho * np.log(summation)
+
+        return KS
+
+    @staticmethod
+    def derivatives(g, rho=50.0):
+        """
+        Compute elements of [dKS_gd, dKS_drho] for the given array of constraints.
+
+        Parameters
+        ----------
+        g : ndarray
+            Array of constraint values, where negative means satisfied and positive means violated.
+        rho : float
+            Constraint Aggregation Factor.
+
+        Returns
+        -------
+        ndarray
+            Derivative of KS function with respect to parameter values.
+        """
+        g_max, g_diff, exponents, summation = KSfunction._compute_values(g, rho)
+
+        dsum_dg = rho * exponents
+        dKS_dsum = 1.0 / (rho * summation)
+        dKS_dg = dKS_dsum * dsum_dg
+
+        dsum_drho = np.sum(g_diff * exponents, axis=-1)[:, np.newaxis]
+        dKS_drho = dKS_dsum * dsum_drho
+
+        return dKS_dg, dKS_drho
 
 
 def area2(hedge, point):

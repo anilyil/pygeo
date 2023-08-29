@@ -90,6 +90,7 @@ def generic_test_base(DVGeo, DVCon, handler, checkDerivs=True, fdstep=1e-4):
     handler.root_add_dict("funcs_base", funcs, rtol=1e-6, atol=1e-6)
     funcsSens = {}
     DVCon.evalFunctionsSens(funcsSens, includeLinear=True)
+
     # regress the derivatives
     if checkDerivs:
         handler.root_add_dict("derivs_base", funcsSens, rtol=1e-6, atol=1e-6)
@@ -522,6 +523,105 @@ class RegTestPyGeo(unittest.TestCase):
                 name="toverc_twisted",
                 rtol=1e-3,
                 atol=1e-3,
+            )
+
+            funcs, funcsSens = self.wing_test_deformed(DVGeo, DVCon, handler)
+
+    def test_teCloseout(self, train=False, refDeriv=False):
+        refFile = os.path.join(self.base_path, "ref/test_DVConstraints_teSlope.ref")
+        with BaseRegTest(refFile, train=train) as handler:
+            DVGeo, DVCon = self.generate_dvgeo_dvcon("box")
+
+            lePt = [0.0, 0.0, 0.0]
+            tePt = [0.0, 0.0, 8.0]
+            DVCon.addTESlopeConstraint(lePt, tePt, [0, 1, 0], nCon=10, scaled=True)
+
+            funcs, funcsSens = generic_test_base(DVGeo, DVCon, handler)
+            handler.assert_allclose(
+                funcs["DVCon1_te_slope_constraints_0"],
+                np.ones(10),
+                name="teSlope_base",
+                rtol=1e-7,
+                atol=1e-7,
+            )
+
+            funcs, funcsSens = self.wing_test_twist(DVGeo, DVCon, handler)
+            handler.assert_allclose(
+                funcs["DVCon1_te_slope_constraints_0"],
+                np.ones(10),
+                name="teSlope_twisted",
+                rtol=1e-3,
+                atol=1e-3,
+            )
+
+            funcs, funcsSens = self.wing_test_deformed(DVGeo, DVCon, handler)
+
+    def test_ksRelative(self, train=False, refDeriv=False):
+        refFile = os.path.join(self.base_path, "ref/test_DVConstraints_ksRel.ref")
+        with BaseRegTest(refFile, train=train) as handler:
+            DVGeo, DVCon = self.generate_dvgeo_dvcon("box")
+
+            lePt = [0.0, 0.0, 0.0]
+            tePt = [0.0, 0.0, 8.0]
+
+            DVCon.addKSMaxThicknessToChordConstraint(
+                lePt, tePt, 20, [0, 1, 0], conType="relative_chord", chordDir=[1, 0, 0], scaled=True, rho=1000.0
+            )
+
+            funcs, funcsSens = generic_test_base(DVGeo, DVCon, handler)
+
+            # We need to have a tolerance of 1e-2 because the max is conservative with rho=1e4
+            # Rho > 1e4 will cause the finite difference check to fail
+            handler.assert_allclose(
+                funcs["DVCon1_ksmax_thickness_to_chord_constraints_0"].flatten(),
+                np.array([1.0]),
+                name="teKSRel_base",
+                rtol=1e-2,
+                atol=1e-2,
+            )
+
+            funcs, funcsSens = self.wing_test_twist(DVGeo, DVCon, handler)
+            handler.assert_allclose(
+                funcs["DVCon1_ksmax_thickness_to_chord_constraints_0"].flatten(),
+                np.array([1.0]),
+                name="teKSRel_twisted",
+                rtol=1e-2,
+                atol=1e-2,
+            )
+
+            funcs, funcsSens = self.wing_test_deformed(DVGeo, DVCon, handler)
+
+    def test_ksFull(self, train=False, refDeriv=False):
+        refFile = os.path.join(self.base_path, "ref/test_DVConstraints_ksFull.ref")
+        with BaseRegTest(refFile, train=train) as handler:
+            DVGeo, DVCon = self.generate_dvgeo_dvcon("box")
+
+            lePt = [0.0, 0.0, 0.0]
+            tePt = [0.0, 0.0, 8.0]
+
+            DVCon.addKSMaxThicknessToChordConstraint(
+                lePt, tePt, 20, [0, 1, 0], conType="full_chord", chordDir=[1, 0, 0], scaled=True, rho=1000.0
+            )
+
+            funcs, funcsSens = generic_test_base(DVGeo, DVCon, handler)
+
+            # We need to have a tolerance of 1e-2 because the max is conservative with rho=1e4
+            # Rho > 1e4 will cause the finite difference check to fail
+            handler.assert_allclose(
+                funcs["DVCon1_ksmax_thickness_to_chord_constraints_0"].flatten(),
+                np.array([1.0]),
+                name="teKSFull_base",
+                rtol=1e-2,
+                atol=1e-2,
+            )
+
+            funcs, funcsSens = self.wing_test_twist(DVGeo, DVCon, handler)
+            handler.assert_allclose(
+                funcs["DVCon1_ksmax_thickness_to_chord_constraints_0"].flatten(),
+                np.array([1.0]),
+                name="teKSFull_twisted",
+                rtol=1e-2,
+                atol=1e-2,
             )
 
             funcs, funcsSens = self.wing_test_deformed(DVGeo, DVCon, handler)
