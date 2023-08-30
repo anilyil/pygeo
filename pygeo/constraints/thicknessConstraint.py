@@ -176,120 +176,9 @@ class ThicknessToChordConstraint(GeometricConstraint):
             handle.write("%d %d\n" % (2 * i + 1, 2 * i + 2))
 
 
-class KSMaxThicknessToChordRelativeConstraint(GeometricConstraint):
+class KSMaxThicknessToChordConstraint(GeometricConstraint):
     """
-    KSMaxThicknessToChordRelativeConstraint represents the maximum of a
-    set of thickess-to-chord ratio constraints.  The t/c constraints
-    used in the KS aggregation are computed the same as the
-    ThicknessToChordConstraints class.
-
-    One of these objects is created each time a
-    addKSMaxThicknessToChordConstraints call is made. The user should
-    not have to deal with this class directly.
-    """
-
-    def __init__(self, name, coords, rho, lower, upper, scale, DVGeo, addToPyOpt, compNames):
-        nCon = len(coords) // 4
-        super().__init__(name, nCon, lower, upper, scale, DVGeo, addToPyOpt)
-
-        self.coords = coords
-        self.rho = rho
-
-        # Embed the coordinates
-        self.DVGeo.addPointSet(self.coords, self.name, compNames=compNames)
-
-        # Compute initial t/c constraints
-        self.ToC0 = np.zeros(self.nCon)
-        for i in range(nCon):
-            t = geo_utils.norm.eDist(self.coords[4 * i], self.coords[4 * i + 1])
-            c = geo_utils.norm.eDist(self.coords[4 * i + 2], self.coords[4 * i + 3])
-
-            self.ToC0[i] = t / c
-
-        # Compute the absolute t/c at the baseline
-        self.max0 = np.max(self.ToC0)
-
-    def evalFunctions(self, funcs, config):
-        """
-        Evaluate the functions this object has and place in the funcs dictionary
-
-        Parameters
-        ----------
-        funcs : dict
-            Dictionary to place function values
-        """
-        # Pull out the most recent set of coordinates:
-        self.coords = self.DVGeo.update(self.name, config=config)
-        ToC = np.zeros(self.nCon)
-        for i in range(self.nCon):
-            t = geo_utils.eDist(self.coords[4 * i], self.coords[4 * i + 1])
-            c = geo_utils.eDist(self.coords[4 * i + 2], self.coords[4 * i + 3])
-            ToC[i] = (t / c) / self.ToC0[i]
-
-        funcs[self.name] = geo_utils.KSfunction.compute(ToC, self.rho)
-
-    def evalFunctionsSens(self, funcsSens, config):
-        """
-        Evaluate the sensitivity of the functions this object has and
-        place in the funcsSens dictionary
-
-        Parameters
-        ----------
-        funcsSens : dict
-            Dictionary to place function values
-        """
-
-        nDV = self.DVGeo.getNDV()
-        if nDV > 0:
-            dToCdPt = np.zeros((self.nCon, self.coords.shape[0], self.coords.shape[1]))
-
-            ToC = np.zeros(self.nCon)
-            for i in range(self.nCon):
-                t = geo_utils.eDist(self.coords[4 * i], self.coords[4 * i + 1])
-                c = geo_utils.eDist(self.coords[4 * i + 2], self.coords[4 * i + 3])
-                ToC[i] = (t / c) / self.ToC0[i]
-
-                p1b, p2b = geo_utils.eDist_b(self.coords[4 * i], self.coords[4 * i + 1])
-                p3b, p4b = geo_utils.eDist_b(self.coords[4 * i + 2], self.coords[4 * i + 3])
-
-                dToCdPt[i, 4 * i] = p1b / c / self.ToC0[i]
-                dToCdPt[i, 4 * i + 1] = p2b / c / self.ToC0[i]
-                dToCdPt[i, 4 * i + 2] = (-p3b * t / c**2) / self.ToC0[i]
-                dToCdPt[i, 4 * i + 3] = (-p4b * t / c**2) / self.ToC0[i]
-
-            # Get the derivative of the ks function with respect to the t/c constraints
-            dKSdToC, _ = geo_utils.KSfunction.derivatives(ToC, self.rho)
-
-            # Use the chain rule to get the derivative of KS Max w.r.t the coordinates
-            #   - Matrix-tensor product
-            #   - dKSdToC is shape (1, nCon) and dToCdPt is shape (nCon, nCoords, 3)
-            #   - Shape of dKSdPt is (nCoords, 3)
-            dKSdPt = np.einsum("ij,ijk->jk", dKSdToC.T, dToCdPt)
-
-            # Derivaitves of KSmax(t/c) w.r.t coordinates
-            funcsSens[self.name] = self.DVGeo.totalSensitivity(dKSdPt, self.name, config=config)
-
-    def writeTecplot(self, handle):
-        """
-        Write the visualization of this set of thickness constraints
-        to the open file handle
-        """
-        handle.write("Zone T=%s\n" % self.name)
-        handle.write("Nodes = %d, Elements = %d ZONETYPE=FELINESEG\n" % (len(self.coords), len(self.coords) // 2))
-        handle.write("DATAPACKING=POINT\n")
-
-        # Write the coordinates and variables
-        for i in range(len(self.coords)):
-            handle.write(f"{self.coords[i, 0]:f} {self.coords[i, 1]:f} {self.coords[i, 2]:f}\n")
-
-        # Write the FE line segment indices
-        for i in range(len(self.coords) // 2):
-            handle.write("%d %d\n" % (2 * i + 1, 2 * i + 2))
-
-
-class KSMaxThicknessToChordFullConstraint(GeometricConstraint):
-    """
-    KSMaxThicknessToChordFullConstraint represents the maximum of a
+    KSMaxThicknessToChordConstraint represents the maximum of a
     set of thickess-to-chord ratio constraints.  The chord is computed
     as the Euclidean distance from the provided leading edge to trailing
     edge points.  Each thickness is divided by the chord distance and
@@ -300,7 +189,7 @@ class KSMaxThicknessToChordFullConstraint(GeometricConstraint):
     not have to deal with this class directly.
     """
 
-    def __init__(self, name, coords, lePt, tePt, rho, lower, upper, scaled, scale, DVGeo, addToPyOpt, compNames):
+    def __init__(self, name, coords, lePt, tePt, rho, divideByChord, lower, upper, scaled, scale, DVGeo, addToPyOpt, compNames):
         nCon = len(coords) // 2
         super().__init__(name, nCon, lower, upper, scale, DVGeo, addToPyOpt)
 
@@ -308,6 +197,7 @@ class KSMaxThicknessToChordFullConstraint(GeometricConstraint):
         self.leTePts = np.array([lePt, tePt])
         self.scaled = scaled
         self.rho = rho
+        self.divideByChord = divideByChord
 
         # Embed the coordinates
         self.DVGeo.addPointSet(self.coords, f"{self.name}_coords", compNames=compNames)
@@ -320,8 +210,11 @@ class KSMaxThicknessToChordFullConstraint(GeometricConstraint):
             t = geo_utils.norm.eDist(coords[2 * i], coords[2 * i + 1])
             c = geo_utils.norm.eDist(lePt, tePt)
 
-            # Divide by the chord that corresponds to this set of constraints
-            self.ToC0[i] = t / c
+            if self.divideByChord:
+                # Divide by the chord that corresponds to this set of constraints
+                self.ToC0[i] = t / c
+            else:
+                self.ToC0[i] = t
 
         # Compute the absolute t/c at the baseline
         self.max0 = np.max(self.ToC0)
@@ -347,14 +240,18 @@ class KSMaxThicknessToChordFullConstraint(GeometricConstraint):
             t = geo_utils.norm.eDist(self.coords[2 * i], self.coords[2 * i + 1])
             c = geo_utils.norm.eDist(self.leTePts[0], self.leTePts[1])
 
-            # Divide by the chord that corresponds to this constraint section
-            ToC[i] = t / c
-
-            if self.scaled:
-                ToC[i] /= self.ToC0[i]
+            if self.divideByChord:
+                # Divide by the chord that corresponds to this constraint section
+                ToC[i] = t / c
+            else:
+                ToC[i] = t
 
         # Now we want to take the KS max over the toothpicks
         maxToC = geo_utils.KSfunction.compute(ToC, self.rho)
+
+        if self.scaled:
+            maxToC /= self.max0
+
         funcs[self.name] = maxToC
 
     def evalFunctionsSens(self, funcsSens, config):
@@ -378,7 +275,10 @@ class KSMaxThicknessToChordFullConstraint(GeometricConstraint):
                 t = geo_utils.eDist(self.coords[2 * i], self.coords[2 * i + 1])
                 c = geo_utils.eDist(self.leTePts[0], self.leTePts[1])
 
-                ToC[i] = t / c
+                if self.divideByChord:
+                    ToC[i] = t / c
+                else:
+                    ToC[i] = t
 
                 # Partial derivative of thickness w.r.t coordinates
                 p1b, p2b = geo_utils.eDist_b(self.coords[2 * i], self.coords[2 * i + 1])
@@ -386,23 +286,25 @@ class KSMaxThicknessToChordFullConstraint(GeometricConstraint):
                 # Partial derivative of chord distance w.r.t coordinates
                 p3b, p4b = geo_utils.eDist_b(self.leTePts[0], self.leTePts[1])
 
-                # Partial of t/c constraints w.r.t up and down coordinates
-                dToCdCoords[i, 2 * i] = p1b / c
-                dToCdCoords[i, 2 * i + 1] = p2b / c
+                if self.divideByChord:
+                    # Partial of t/c constraints w.r.t up and down coordinates
+                    dToCdCoords[i, 2 * i] = p1b / c
+                    dToCdCoords[i, 2 * i + 1] = p2b / c
 
-                # Partial of t/c constraints w.r.t le and te points
-                dToCdLeTePts[i, 0] = -p3b * t / c**2
-                dToCdLeTePts[i, 1] = -p4b * t / c**2
-
-                if self.scaled:
-                    # If scaled divide by the initial t/c value
-                    dToCdCoords[i, 2 * i] /= self.ToC0[i]
-                    dToCdCoords[i, 2 * i + 1] /= self.ToC0[i]
-                    dToCdLeTePts[i, 0] /= self.ToC0[i]
-                    dToCdLeTePts[i, 1] /= self.ToC0[i]
+                    # Partial of t/c constraints w.r.t le and te points
+                    dToCdLeTePts[i, 0] = -p3b * t / c**2
+                    dToCdLeTePts[i, 1] = -p4b * t / c**2
+                else:
+                    # Partial of t/c constraints w.r.t up and down coordinates
+                    dToCdCoords[i, 2 * i] = p1b
+                    dToCdCoords[i, 2 * i + 1] = p2b
 
             # Get the derivative of the ks function with respect to the t/c constraints
             dKSdToC, _ = geo_utils.KSfunction.derivatives(ToC, self.rho)
+
+            if self.scaled:
+                # If scaled divide by the initial t/c value
+                dKSdToC /= self.max0
 
             # Use the chain rule to compute the derivative of KS Max w.r.t the coordinates
             #   - Need a matrix-tensor product

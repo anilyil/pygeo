@@ -20,8 +20,7 @@ from .locationConstraint import LocationConstraint
 from .planarityConstraint import PlanarityConstraint
 from .radiusConstraint import RadiusConstraint
 from .thicknessConstraint import (
-    KSMaxThicknessToChordFullConstraint,
-    KSMaxThicknessToChordRelativeConstraint,
+    KSMaxThicknessToChordConstraint,
     TESlopeConstraint,
     ThicknessConstraint,
     ThicknessToChordConstraint,
@@ -3216,15 +3215,17 @@ class DVConstraints:
         self,
         lePt,
         tePt,
-        nCon,
         axis,
+        nChord=50,
+        pctChordStart=0.01,
+        pctChordEnd=0.99,
         conType="full_chord",
-        chordDir=None,
+        divideByChord=True,
         rho=1000.0,
-        lower=1.0,
-        upper=3.0,
+        lower=None,
+        upper=None,
         scale=1.0,
-        scaled=False,
+        scaled=True,
         name=None,
         addToPyOpt=True,
         surfaceName="default",
@@ -3333,20 +3334,22 @@ class DVConstraints:
         p0, p1, p2 = self._getSurfaceVertices(surfaceName=surfaceName)
 
         # Initialize the coordinates
-        if conType == "full_chord":
-            coords = np.zeros((nCon, 2, 3))
-        elif conType == "relative_chord":
-            coords = np.zeros((nCon, 4, 3))
-        else:
-            raise Error(f"conType {conType} is not supported.")
+        coords = np.zeros((nChord, 2, 3))
 
         # Create the constraint lines
-        line = Curve(X=np.array([lePt, tePt]), k=2)  # Linear b-spline
-        s = np.linspace(0, 1, nCon)
-        X = line(s)
+        lePt = np.array(lePt)
+        tePt = np.array(tePt)
+
+        ptStart = lePt + pctChordStart * (tePt - lePt)
+        ptEnd = lePt + pctChordEnd * (tePt - lePt)
+
+        # Create the constraint lines
+        line = Curve(X=np.array([ptStart, ptEnd]), k=2)  # Linear b-spline
+        s = np.linspace(0, 1, nChord)  # parameteric points
+        X = line(s)  # Evaluate the parameteric points on the b-spline
 
         # Project all the points
-        for i in range(nCon):
+        for i in range(nChord):
             # Project actual node
             up, down, fail = geo_utils.projectNode(X[i], axis, p0, p1 - p0, p2 - p0)
 
@@ -3359,20 +3362,8 @@ class DVConstraints:
             coords[i, 0] = up
             coords[i, 1] = down
 
-            if conType == "relative_chord":
-                if chordDir is None:
-                    raise Error("Chord direction must be set when using conType 'relative_chord'")
-
-                chordDir = np.array(chordDir)
-                height = np.linalg.norm(coords[i, 0] - coords[i, 1])
-                coords[i, 2] = 0.5 * (up + down)
-                coords[i, 3] = coords[i, 2] + 0.1 * height * chordDir
-
         # Add the coordinates to the coordinate matrix
-        if conType == "full_chord":
-            coords = coords.reshape((nCon * 2, 3))
-        elif conType == "relative_chord":
-            coords = coords.reshape((nCon * 4, 3))
+        coords = coords.reshape((nChord * 2, 3))
 
         typeName = "thickCon"
         if typeName not in self.constraints:
@@ -3383,25 +3374,21 @@ class DVConstraints:
         else:
             conName = name
 
-        if conType == "full_chord":
-            self.constraints[typeName][conName] = KSMaxThicknessToChordFullConstraint(
-                conName,
-                coords,
-                np.array(lePt),
-                np.array(tePt),
-                rho,
-                lower,
-                upper,
-                scaled,
-                scale,
-                self.DVGeometries[DVGeoName],
-                addToPyOpt,
-                compNames,
-            )
-        elif conType == "relative_chord":
-            self.constraints[typeName][conName] = KSMaxThicknessToChordRelativeConstraint(
-                conName, coords, rho, lower, upper, scale, self.DVGeometries[DVGeoName], addToPyOpt, compNames
-            )
+        self.constraints[typeName][conName] = KSMaxThicknessToChordConstraint(
+            conName,
+            coords,
+            np.array(lePt),
+            np.array(tePt),
+            rho,
+            divideByChord,
+            lower,
+            upper,
+            scaled,
+            scale,
+            self.DVGeometries[DVGeoName],
+            addToPyOpt,
+            compNames,
+        )
 
     def addTESlopeConstraint(
         self,
