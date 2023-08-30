@@ -557,27 +557,32 @@ class RegTestPyGeo(unittest.TestCase):
             funcs, funcsSens = self.wing_test_deformed(DVGeo, DVCon, handler)
 
     def test_ksToC(self, train=False, refDeriv=False):
-        refFile = os.path.join(self.base_path, "ref/test_DVConstraints_ksFull.ref")
+        refFile = os.path.join(self.base_path, "ref/test_DVConstraints_ksToC.ref")
         with BaseRegTest(refFile, train=train) as handler:
             DVGeo, DVCon = self.generate_dvgeo_dvcon("box")
 
             lePt = [0.0, 0.0, 0.0]
             tePt = [0.0, 0.0, 8.0]
 
+            DVCon.addKSMaxThicknessToChordConstraint(lePt, tePt, [0, 1, 0], scaled=True, rho=1000.0)
+
             DVCon.addKSMaxThicknessToChordConstraint(
-                lePt, tePt, [0, 1, 0], scaled=True, rho=1000.0
+                lePt,
+                tePt,
+                [0, 1, 0],
+                scaled=False,
+                rho=1000.0,
+                divideByChord=False,
             )
 
             funcs, funcsSens = generic_test_base(DVGeo, DVCon, handler)
 
-            # We need to have a tolerance of 1e-2 because the max is conservative with rho=1e4
-            # Rho > 1e4 will cause the finite difference check to fail
             handler.assert_allclose(
                 funcs["DVCon1_ksmax_thickness_to_chord_constraints_0"].flatten(),
                 np.array([1.0]),
                 name="teKSFull_base",
-                rtol=1e-2,
-                atol=1e-2,
+                rtol=1e-8,
+                atol=1e-8,
             )
 
             funcs, funcsSens = self.wing_test_twist(DVGeo, DVCon, handler)
