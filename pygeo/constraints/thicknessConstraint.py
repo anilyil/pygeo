@@ -217,7 +217,7 @@ class KSMaxThicknessToChordConstraint(GeometricConstraint):
                 self.ToC0[i] = t
 
         # Compute the absolute t/c at the baseline
-        self.max0 = np.max(self.ToC0)
+        self.max0 = geo_utils.KSfunction.compute(self.ToC0, self.rho)
 
     def evalFunctions(self, funcs, config):
         """
