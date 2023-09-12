@@ -338,8 +338,8 @@ class KSMaxThicknessToChordConstraint(GeometricConstraint):
             handle.write(f"{self.coords[i, 0]:f} {self.coords[i, 1]:f} {self.coords[i, 2]:f}\n")
 
         # Write the coordinates for the chord from LE to TE
-        handle.write(f"{self.leTePts[0, 0]:f} {self.leTePts[0, 1]:f} {self.leTePts[0, 2]:f} {0.0:f} {0.0:f} {0.0:f}\n")
-        handle.write(f"{self.leTePts[1, 0]:f} {self.leTePts[1, 1]:f} {self.leTePts[1, 2]:f} {0.0:f} {0.0:f} {0.0:f}\n")
+        handle.write(f"{self.leTePts[0, 0]:f} {self.leTePts[0, 1]:f} {self.leTePts[0, 2]:f}\n")
+        handle.write(f"{self.leTePts[1, 0]:f} {self.leTePts[1, 1]:f} {self.leTePts[1, 2]:f}\n")
 
         # Write the FE line segment indices for the vertical toothpicks
         for i in range(len(self.coords) // 2):
