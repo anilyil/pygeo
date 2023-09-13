@@ -29,10 +29,10 @@ class KSfunction(object):
         tuple
             g_max, g_diff, exponents and summation as needed by compute and derivates functions.
         """
-        g_max = np.max(np.atleast_2d(g), axis=-1)[:, np.newaxis]
+        g_max = np.max(g)
         g_diff = g - g_max
         exponents = np.exp(rho * g_diff)
-        summation = np.sum(exponents, axis=-1)[:, np.newaxis]
+        summation = np.sum(exponents)
         return g_max, g_diff, exponents, summation
 
     @staticmethod
@@ -81,7 +81,7 @@ class KSfunction(object):
         dKS_dsum = 1.0 / (rho * summation)
         dKS_dg = dKS_dsum * dsum_dg
 
-        dsum_drho = np.sum(g_diff * exponents, axis=-1)[:, np.newaxis]
+        dsum_drho = np.sum(np.multiply(g_diff, exponents))
         dKS_drho = dKS_dsum * dsum_drho
 
         return dKS_dg, dKS_drho

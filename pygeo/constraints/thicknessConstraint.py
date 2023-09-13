@@ -190,8 +190,8 @@ class KSMaxThicknessToChordConstraint(GeometricConstraint):
     """
 
     def __init__(self, name, coords, lePt, tePt, rho, divideByChord, lower, upper, scaled, scale, DVGeo, addToPyOpt, compNames):
-        nCon = len(coords) // 2
-        super().__init__(name, nCon, lower, upper, scale, DVGeo, addToPyOpt)
+        self.nPoint = len(coords) // 2
+        super().__init__(name, 1, lower, upper, scale, DVGeo, addToPyOpt)
 
         self.coords = coords
         self.leTePts = np.array([lePt, tePt])
@@ -204,9 +204,9 @@ class KSMaxThicknessToChordConstraint(GeometricConstraint):
         self.DVGeo.addPointSet(self.leTePts, f"{self.name}_lete", compNames=compNames)
 
         # Compute the t/c constraints
-        self.ToC0 = np.zeros(self.nCon)
+        self.ToC0 = np.zeros(self.nPoint)
 
-        for i in range(self.nCon):
+        for i in range(self.nPoint):
             t = geo_utils.norm.eDist(coords[2 * i], coords[2 * i + 1])
             c = geo_utils.norm.eDist(lePt, tePt)
 
@@ -233,9 +233,9 @@ class KSMaxThicknessToChordConstraint(GeometricConstraint):
         self.leTePts = self.DVGeo.update(f"{self.name}_lete", config=config)
 
         # Compute the t/c constraints
-        ToC = np.zeros(self.nCon)
+        ToC = np.zeros(self.nPoint)
 
-        for i in range(self.nCon):
+        for i in range(self.nPoint):
             # Calculate the thickness
             t = geo_utils.norm.eDist(self.coords[2 * i], self.coords[2 * i + 1])
             c = geo_utils.norm.eDist(self.leTePts[0], self.leTePts[1])
@@ -267,11 +267,11 @@ class KSMaxThicknessToChordConstraint(GeometricConstraint):
 
         nDV = self.DVGeo.getNDV()
         if nDV > 0:
-            dToCdCoords = np.zeros((self.nCon, self.coords.shape[0], self.coords.shape[1]))
-            dToCdLeTePts = np.zeros((self.nCon, self.leTePts.shape[0], self.leTePts.shape[1]))
+            dToCdCoords = np.zeros((self.nPoint, 2, self.coords.shape[1]))
+            dToCdLeTePts = np.zeros((self.nPoint, 2, self.leTePts.shape[1]))
 
-            ToC = np.zeros(self.nCon)
-            for i in range(self.nCon):
+            ToC = np.zeros(self.nPoint)
+            for i in range(self.nPoint):
                 t = geo_utils.eDist(self.coords[2 * i], self.coords[2 * i + 1])
                 c = geo_utils.eDist(self.leTePts[0], self.leTePts[1])
 
@@ -288,16 +288,16 @@ class KSMaxThicknessToChordConstraint(GeometricConstraint):
 
                 if self.divideByChord:
                     # Partial of t/c constraints w.r.t up and down coordinates
-                    dToCdCoords[i, 2 * i] = p1b / c
-                    dToCdCoords[i, 2 * i + 1] = p2b / c
+                    dToCdCoords[i, 0] = p1b / c
+                    dToCdCoords[i, 1] = p2b / c
 
                     # Partial of t/c constraints w.r.t le and te points
                     dToCdLeTePts[i, 0] = -p3b * t / c**2
                     dToCdLeTePts[i, 1] = -p4b * t / c**2
                 else:
                     # Partial of t/c constraints w.r.t up and down coordinates
-                    dToCdCoords[i, 2 * i] = p1b
-                    dToCdCoords[i, 2 * i + 1] = p2b
+                    dToCdCoords[i, 0] = p1b
+                    dToCdCoords[i, 1] = p2b
 
             # Get the derivative of the ks function with respect to the t/c constraints
             dKSdToC, _ = geo_utils.KSfunction.derivatives(ToC, self.rho)
@@ -307,11 +307,14 @@ class KSMaxThicknessToChordConstraint(GeometricConstraint):
                 dKSdToC /= self.max0
 
             # Use the chain rule to compute the derivative of KS Max w.r.t the coordinates
-            #   - Need a matrix-tensor product
-            #   - dKSdToC is shape (1, nCon), dToCdCoords is shape (nCon, nCoords, 3), and dToCdLeTePts is shape (nCon, 2, 3)
-            #   - The shape of dKSdCoords is (nCoords, 3) and the shape of dKSdLeTePts is always (2, 3)
-            dKSdCoords = np.einsum("ij,ijk->jk", dKSdToC.T, dToCdCoords)
-            dKSdLeTePts = np.einsum("ij,ijk->jk", dKSdToC.T, dToCdLeTePts)
+            #   - dKSdToC is shape (nPoints), dToCdCoords is shape (nPoints, 2, 3), and dToCdLeTePts is shape (nPoints, 2, 3)
+            #   - The final shape of dKSdCoords is (nCoords, 3) and the shape of dKSdLeTePts is always (2, 3)
+            # dKSdCoords is the point seeds for the toothpick ends
+            dKSdCoords = np.einsum("i,ijk->ijk", dKSdToC, dToCdCoords)
+            # reshape this so that the points are stacked
+            dKSdCoords = dKSdCoords.reshape(self.nPoint * 2, 3)
+            # dKSdLeTePts is the point seeds for the LE/TE points
+            dKSdLeTePts = np.einsum("i,ijk->jk", dKSdToC, dToCdLeTePts)
 
             tmp0 = self.DVGeo.totalSensitivity(dKSdCoords, f"{self.name}_coords", config=config)
             tmp1 = self.DVGeo.totalSensitivity(dKSdLeTePts, f"{self.name}_lete", config=config)
