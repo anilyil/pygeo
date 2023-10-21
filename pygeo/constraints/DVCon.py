@@ -776,8 +776,8 @@ class DVConstraints:
         vecList,
         surfA,
         surfB,
-        pointSetKwargsA,
-        pointSetKwargsB,
+        pointSetKwargsA=None,
+        pointSetKwargsB=None,
         lower=1.0,
         upper=3.0,
         scaled=True,
@@ -882,6 +882,11 @@ class DVConstraints:
 
         """
         self._checkDVGeo(DVGeoName)
+
+        if pointSetKwargsA is None:
+            pointSetKwargsA = {}
+        if pointSetKwargsB is None:
+            pointSetKwargsB = {}
 
         ptList = np.atleast_2d(ptList)
         vecList = np.atleast_2d(vecList)
