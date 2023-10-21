@@ -146,7 +146,7 @@ class DVGeometry(BaseDVGeometry):
 
         # Flags to determine if this DVGeometry is a parent or child
         self.isChild = child
-        self.children = []
+        self.children = OrderedDict()
         self.iChild = None
         self.masks = None
         self.finalized = False
@@ -689,7 +689,7 @@ class DVGeometry(BaseDVGeometry):
 
         return nAxis
 
-    def addPointSet(self, points, ptName, origConfig=True, coordXfer=None, **kwargs):
+    def addPointSet(self, points, ptName, origConfig=True, coordXfer=None, activeChildren=None, **kwargs):
         """
         Add a set of coordinates to DVGeometry
 
@@ -777,11 +777,27 @@ class DVGeometry(BaseDVGeometry):
                         coords_new = np.dot(coords_new, rot_mat.T)
 
                     return coords_new
-
+        activeChildren : list
+            List of names of the child FFDs that should be used with this pointset.
+            For example, lets say there are 3 child FFDs with names a, b, and c.
+            When a pointset is added to this DVGeo object, it will always be added
+            to the parent. Then, if the activeChildren argument is none, the pointset
+            will also be added to all 3 child FFDs. If activeChildren argument is ["a", "b"],
+            then the pointset will only be added to the children named "a" and "b", and not "c".
+            If activeChildren argument is an empty dictionary, i.e. [], the pointset wont be added
+            to any of the child FFDs. When a pointset is added to a child FFD, the changes in the
+            child FFD is added to the displacement of the pointset. If it is not added to a child,
+            the changes from that child is not included in this pointset. This is useful to
+            control the effect of different child FFDs on different pointsets.
         """
 
         # compNames is only needed for DVGeometryMulti, so remove it if passed
         kwargs.pop("compNames", None)
+
+        # check if we want a custom subset of child DVGeos
+        if activeChildren is None:
+            # take it all
+            activeChildren = list(self.children.keys())
 
         # save this name so that we can zero out the jacobians properly
         self.ptSetNames.append(ptName)
@@ -819,8 +835,12 @@ class DVGeometry(BaseDVGeometry):
             self.FFD._updateVolumeCoef()
 
         # Now embed into the children:
-        for child in self.children:
-            child.addPointSet(points, ptName, origConfig, **kwargs)
+        for childName, child in self.children.items():
+            # only add to the active children for this pointset.
+            # when we are getting the points back from children,
+            # we will check if the ptsetname is already added to the child
+            if childName in activeChildren:
+                child.addPointSet(points, ptName, origConfig, **kwargs)
 
         self.FFD.calcdPtdCoef(ptName)
         self.updated[ptName] = False
@@ -849,23 +869,36 @@ class DVGeometry(BaseDVGeometry):
         if childDVGeo.isChild is False:
             raise Error("Trying to add a child FFD that has NOT been " "created as a child. This operation is illegal.")
 
-        # Extract the coef from the child FFD and ref axis and embed
-        # them into the parent and compute their derivatives
+        # set the index
         iChild = len(self.children)
         childDVGeo.iChild = iChild
 
-        self.FFD.attachPoints(childDVGeo.FFD.coef, "child%d_coef" % (iChild))
-        self.FFD.calcdPtdCoef("child%d_coef" % (iChild))
+        # check if a custom name is provided, if not, we will use the old naming scheme based on the iChild index
+        if childDVGeo.name is None:
+            childName = f"child{iChild:d}"
+        else:
+            childName = childDVGeo.name
+
+        # check if this child name has already been used
+        if childName in self.children:
+            raise Error(
+                f"Another child DVGeo has already been added with the name {childName}. Change the name of one of the child FFDs with the same name and try again."
+            )
+
+        # Extract the coef from the child FFD and ref axis and embed
+        # them into the parent and compute their derivatives
+        self.FFD.attachPoints(childDVGeo.FFD.coef, f"{childName}_coef")
+        self.FFD.calcdPtdCoef(f"{childName}_coef")
 
         # We must finalize the Child here since we need the ref axis
         # coefficients
         if len(childDVGeo.axis) > 0:
             childDVGeo._finalizeAxis()
-            self.FFD.attachPoints(childDVGeo.refAxis.coef, "child%d_axis" % (iChild))
-            self.FFD.calcdPtdCoef("child%d_axis" % (iChild))
+            self.FFD.attachPoints(childDVGeo.refAxis.coef, f"{childName}_axis")
+            self.FFD.calcdPtdCoef(f"{childName}_axis")
 
         # Add the child to the parent and return
-        self.children.append(childDVGeo)
+        self.children[childName] = childDVGeo
 
     def addGlobalDV(self, dvName, value, func, lower=None, upper=None, scale=1.0, config=None):
         """
@@ -1734,7 +1767,7 @@ class DVGeometry(BaseDVGeometry):
 
         # Now call setValues on the children. This way the
         # variables will be set on the children
-        for child in self.children:
+        for child in self.children.values():
             child.setDesignVars(dvDict)
 
     def zeroJacobians(self, ptSetNames):
@@ -1780,7 +1813,7 @@ class DVGeometry(BaseDVGeometry):
         # Now call getValues on the children. This way the
         # returned dictionary will include the variables from
         # the children
-        for child in self.children:
+        for child in self.children.values():
             childdvDict = child.getValues()
             dvDict.update(childdvDict)
 
@@ -1984,17 +2017,17 @@ class DVGeometry(BaseDVGeometry):
             self.FFD.coef = self.origFFDCoef.copy()
             self._setInitialValues()
 
-            for iChild in range(len(self.children)):
-                if len(self.children[iChild].axis) > 0:
-                    self.children[iChild]._finalize()
-                    refaxis_ptSetName = "child%d_axis" % (iChild)
+            for childName, child in self.children.items():
+                if len(child.axis) > 0:
+                    child._finalize()
+                    refaxis_ptSetName = f"{childName}_axis"
                     if refaxis_ptSetName not in self.FFD.embeddedVolumes:
-                        self.FFD.attachPoints(self.children[iChild].refAxis.coef, refaxis_ptSetName)
-                        self.FFD.calcdPtdCoef("child%d_axis" % (iChild))
+                        self.FFD.attachPoints(child.refAxis.coef, refaxis_ptSetName)
+                        self.FFD.calcdPtdCoef(f"{childName}_axis")
         else:
-            for iChild in range(len(self.children)):
-                if len(self.children[iChild].axis) > 0:
-                    refaxis_ptSetName = "child%d_axis" % (iChild)
+            for childName, child in self.children.items():
+                if len(child.axis) > 0:
+                    refaxis_ptSetName = f"{childName}_axis"
                     if refaxis_ptSetName not in self.FFD.embeddedVolumes:
                         raise Error(
                             f"refaxis {refaxis_ptSetName} cannot be added to child FFD after child is appended to parent"
@@ -2082,10 +2115,9 @@ class DVGeometry(BaseDVGeometry):
 
         # Now loop over the children set the FFD and refAxis control
         # points as evaluated from the parent
-        for iChild in range(len(self.children)):
-            child = self.children[iChild]
+        for childName, child in self.children.items():
             child._finalize()
-            self.applyToChild(iChild)
+            self.applyToChild(childName)
 
             if self.complex:
                 # need to propagate the sensitivity to the children Xfinal here to do this
@@ -2093,8 +2125,8 @@ class DVGeometry(BaseDVGeometry):
                 child._complexifyCoef()
                 child.FFD.coef = child.FFD.coef.astype("D")
 
-                dXrefdCoef = self.FFD.embeddedVolumes["child%d_axis" % (iChild)].dPtdCoef
-                dCcdCoef = self.FFD.embeddedVolumes["child%d_coef" % (iChild)].dPtdCoef
+                dXrefdCoef = self.FFD.embeddedVolumes[f"{childName}_axis"].dPtdCoef
+                dCcdCoef = self.FFD.embeddedVolumes[f"{childName}_coef"].dPtdCoef
 
                 if dXrefdCoef is not None:
                     for ii in range(3):
@@ -2106,7 +2138,10 @@ class DVGeometry(BaseDVGeometry):
                 child.refAxis.coef = child.coef.copy()
                 child.refAxis._updateCurveCoef()
 
-            Xfinal += child.update(ptSetName, childDelta=True, config=config)
+            if ptSetName in child.points:
+                # only get this child's contribution if it is active for this pointset
+                # we don't skip the other computations for consistency
+                Xfinal += child.update(ptSetName, childDelta=True, config=config)
 
         self._unComplexifyCoef()
 
@@ -2123,16 +2158,16 @@ class DVGeometry(BaseDVGeometry):
                 Xfinal = self.coordXfer[ptSetName](Xfinal, mode="fwd", applyDisplacement=True)
             return Xfinal
 
-    def applyToChild(self, iChild):
+    def applyToChild(self, childName):
         """
         This function is used to apply the changes in the parent FFD to the
         child FFD points and child reference axis points.
         """
-        child = self.children[iChild]
+        child = self.children[childName]
 
         # Set FFD points and reference axis points from parent
-        child.FFD.coef = self.FFD.getAttachedPoints("child%d_coef" % (iChild))
-        child.coef = self.FFD.getAttachedPoints("child%d_axis" % (iChild))
+        child.FFD.coef = self.FFD.getAttachedPoints(f"{childName}_coef")
+        child.coef = self.FFD.getAttachedPoints(f"{childName}_axis")
 
         # Update the reference axes on the child
         child.refAxis.coef = child.coef.copy()
@@ -2207,10 +2242,8 @@ class DVGeometry(BaseDVGeometry):
             i += dv.nVal
 
         # Add in child portion
-        for iChild in range(len(self.children)):
-            childdIdx = self.children[iChild].convertSensitivityToDict(
-                dIdx, out1D=out1D, useCompositeNames=useCompositeNames
-            )
+        for child in self.children.values():
+            childdIdx = child.convertSensitivityToDict(dIdx, out1D=out1D, useCompositeNames=useCompositeNames)
             # update the total sensitivities with the derivatives from the child
             for key in childdIdx:
                 if key in dIdxDict.keys():
@@ -2273,8 +2306,8 @@ class DVGeometry(BaseDVGeometry):
             i += dv.nVal
 
         # Note: not sure if this works with (multiple) sibling child FFDs
-        for iChild in range(len(self.children)):
-            childdIdx = self.children[iChild].convertDictToSensitivity(dIdxDict)
+        for child in self.children.values():
+            childdIdx = child.convertDictToSensitivity(dIdxDict)
             # update the total sensitivities with the derivatives from the child
             dIdx += childdIdx
         return dIdx
@@ -2303,8 +2336,8 @@ class DVGeometry(BaseDVGeometry):
             names = [self.DVComposite.name]
 
         # Call the children recursively
-        for iChild in range(len(self.children)):
-            names.extend(self.children[iChild].getVarNames())
+        for child in self.children.values():
+            names.extend(child.getVarNames())
 
         return names
 
@@ -2666,15 +2699,17 @@ class DVGeometry(BaseDVGeometry):
                 self.JT[ptSetName].sort_indices()
 
             # Add in child portion
-            for iChild in range(len(self.children)):
+            for childName, child in self.children.items():
                 # Reset control points on child for child link derivatives
-                self.applyToChild(iChild)
-                self.children[iChild].computeTotalJacobian(ptSetName, config=config)
+                self.applyToChild(childName)
 
-                if self.JT[ptSetName] is not None:
-                    self.JT[ptSetName] = self.JT[ptSetName] + self.children[iChild].JT[ptSetName]
-                else:
-                    self.JT[ptSetName] = self.children[iChild].JT[ptSetName]
+                if ptSetName in child.points:
+                    child.computeTotalJacobian(ptSetName, config=config)
+
+                    if self.JT[ptSetName] is not None:
+                        self.JT[ptSetName] = self.JT[ptSetName] + child.JT[ptSetName]
+                    else:
+                        self.JT[ptSetName] = child.JT[ptSetName]
         else:
             self.JT[ptSetName] = None
 
@@ -2694,7 +2729,7 @@ class DVGeometry(BaseDVGeometry):
 
         if self.nPts[ptSetName] is None:
             self.nPts[ptSetName] = len(self.update(ptSetName).flatten())
-        for child in self.children:
+        for child in self.children.values():
             child.nPts[ptSetName] = self.nPts[ptSetName]
 
         DVGlobalCount, DVLocalCount, DVSecLocCount, DVSpanLocCount = self._getDVOffsets()
@@ -2777,15 +2812,14 @@ class DVGeometry(BaseDVGeometry):
                 DVLocalCount += 1
                 self.DV_listLocal[key].value[j] = refVal
 
-        for iChild in range(len(self.children)):
-            child = self.children[iChild]
+        for childName, child in self.children.items():
             child._finalize()
 
             # In the updates applied previously, the FFD points on the children
             # will have been set as deltas. We need to set them as absolute
             # coordinates based on the changes in the parent before moving down
             # to the next level
-            self.applyToChild(iChild)
+            self.applyToChild(childName)
 
             # Now get jacobian from child and add to parent jacobian
             child.computeTotalJacobianCS(ptSetName, config=config)
@@ -2904,7 +2938,7 @@ class DVGeometry(BaseDVGeometry):
                             )
 
         # Add variables from the children
-        for child in self.children:
+        for child in self.children.values():
             child.addVariablesPyOpt(
                 optProb, globalVars, localVars, sectionlocalVars, spanwiselocalVars, ignoreVars, freezeVars
             )
@@ -2954,9 +2988,9 @@ class DVGeometry(BaseDVGeometry):
         if not len(self.axis) == 0:
             self.refAxis.writeTecplot(gFileName, orig=True, curves=True, coef=True)
         # Write children axes:
-        for iChild in range(len(self.children)):
-            cFileName = fileName + f"_child{iChild:03d}.dat"
-            self.children[iChild].refAxis.writeTecplot(cFileName, orig=True, curves=True, coef=True)
+        for childName, child in self.children.items():
+            cFileName = fileName + f"_{childName}.dat"
+            child.refAxis.writeTecplot(cFileName, orig=True, curves=True, coef=True)
 
     def writeLinks(self, fileName):
         """Write the links attaching the control points to the reference axes
@@ -3119,7 +3153,7 @@ class DVGeometry(BaseDVGeometry):
         Return a flattened list of all DVGeo objects in the family hierarchy.
         """
         flatChildren = [self]
-        for child in self.children:
+        for child in self.children.values():
             flatChildren += child.getFlattenedChildren()
 
         return flatChildren
@@ -3532,7 +3566,7 @@ class DVGeometry(BaseDVGeometry):
         for key in self.DV_listGlobal:
             nDV += self.DV_listGlobal[key].nVal
 
-        for child in self.children:
+        for child in self.children.values():
             nDV += child._getNDVGlobal()
 
         return nDV
@@ -3545,7 +3579,7 @@ class DVGeometry(BaseDVGeometry):
         for key in self.DV_listLocal:
             nDV += self.DV_listLocal[key].nVal
 
-        for child in self.children:
+        for child in self.children.values():
             nDV += child._getNDVLocal()
 
         return nDV
@@ -3558,7 +3592,7 @@ class DVGeometry(BaseDVGeometry):
         for key in self.DV_listSectionLocal:
             nDV += self.DV_listSectionLocal[key].nVal
 
-        for child in self.children:
+        for child in self.children.values():
             nDV += child._getNDVSectionLocal()
 
         return nDV
@@ -3571,7 +3605,7 @@ class DVGeometry(BaseDVGeometry):
         for key in self.DV_listSpanwiseLocal:
             nDV += self.DV_listSpanwiseLocal[key].nVal
 
-        for child in self.children:
+        for child in self.children.values():
             nDV += child._getNDVSpanwiseLocal()
 
         return nDV
@@ -3660,7 +3694,7 @@ class DVGeometry(BaseDVGeometry):
         nDVSW = self._getNDVSpanwiseLocalSelf()
 
         # Set the total number of global and local DVs into any children of this parent
-        for child in self.children:
+        for child in self.children.values():
             # now get the numbers for the current parent child
 
             child.nDV_T = self.nDV_T
@@ -3705,11 +3739,11 @@ class DVGeometry(BaseDVGeometry):
             new_pts[:, 2] = self.FFD.coef[self.ptAttachInd, 2]
 
             # set the forward effect of the global design vars in each child
-            for iChild in range(len(self.children)):
+            for childName, child in self.children.items():
                 # get the derivative of the child axis and control points wrt the parent
                 # control points
-                dXrefdCoef = self.FFD.embeddedVolumes["child%d_axis" % (iChild)].dPtdCoef
-                dCcdCoef = self.FFD.embeddedVolumes["child%d_coef" % (iChild)].dPtdCoef
+                dXrefdCoef = self.FFD.embeddedVolumes[f"{childName}_axis"].dPtdCoef
+                dCcdCoef = self.FFD.embeddedVolumes[f"{childName}_coef"].dPtdCoef
 
                 # create a vector with the derivative of the parent control points wrt the
                 # parent global variables
@@ -3735,11 +3769,11 @@ class DVGeometry(BaseDVGeometry):
                 dCcdXdv[1::3] = dCcdCoef.dot(tmp[:, 1])
                 dCcdXdv[2::3] = dCcdCoef.dot(tmp[:, 2])
                 if localDV and self._getNDVLocalSelf():
-                    self.children[iChild].dXrefdXdvl[:, iDV] += dXrefdXdv
-                    self.children[iChild].dCcdXdvl[:, iDV] += dCcdXdv
+                    child.dXrefdXdvl[:, iDV] += dXrefdXdv
+                    child.dCcdXdvl[:, iDV] += dCcdXdv
                 elif self._getNDVGlobalSelf():
-                    self.children[iChild].dXrefdXdvg[:, iDV] += dXrefdXdv.real
-                    self.children[iChild].dCcdXdvg[:, iDV] += dCcdXdv.real
+                    child.dXrefdXdvg[:, iDV] += dXrefdXdv.real
+                    child.dCcdXdvg[:, iDV] += dCcdXdv.real
         return new_pts
 
     def _update_deriv_cs(self, ptSetName, config=None):
@@ -3814,18 +3848,17 @@ class DVGeometry(BaseDVGeometry):
                 Xfinal[:, ii] += imag_j * dPtdCoef.dot(imag_part[:, ii])
 
         # now do the same for the children
-        for iChild in range(len(self.children)):
+        for childName, child in self.children.items():
             # first, update the coef. to their new locations
-            child = self.children[iChild]
             child._finalize()
-            self.applyToChild(iChild)
+            self.applyToChild(childName)
 
             # now cast forward the complex part of the derivative
             child._complexifyCoef()
             child.FFD.coef = child.FFD.coef.astype("D")
 
-            dXrefdCoef = self.FFD.embeddedVolumes["child%d_axis" % (iChild)].dPtdCoef
-            dCcdCoef = self.FFD.embeddedVolumes["child%d_coef" % (iChild)].dPtdCoef
+            dXrefdCoef = self.FFD.embeddedVolumes[f"{childName}_axis"].dPtdCoef
+            dCcdCoef = self.FFD.embeddedVolumes[f"{childName}_coef"].dPtdCoef
 
             if dXrefdCoef is not None:
                 for ii in range(3):
@@ -3909,7 +3942,7 @@ class DVGeometry(BaseDVGeometry):
 
         if self.nPts[ptSetName] is None:
             self.nPts[ptSetName] = len(coords0.flatten())
-        for child in self.children:
+        for child in self.children.values():
             child.nPts[ptSetName] = self.nPts[ptSetName]
 
         DVGlobalCount, DVLocalCount, DVSecLocCount, DVSpanLocCount = self._getDVOffsets()
@@ -3995,15 +4028,14 @@ class DVGeometry(BaseDVGeometry):
                 DVLocalCount += 1
                 self.DV_listLocal[key].value[j] = refVal
 
-        for iChild in range(len(self.children)):
-            child = self.children[iChild]
+        for childName, child in self.children.items():
             child._finalize()
 
             # In the updates applied previously, the FFD points on the children
             # will have been set as deltas. We need to set them as absolute
             # coordinates based on the changes in the parent before moving down
             # to the next level
-            self.applyToChild(iChild)
+            self.applyToChild(childName)
 
             # Now get jacobian from child and add to parent jacobian
             child.computeTotalJacobianFD(ptSetName, config=config)
@@ -4028,14 +4060,14 @@ class DVGeometry(BaseDVGeometry):
 
             # Create the storage arrays for the information that must be
             # passed to the children
-            for iChild in range(len(self.children)):
-                N = self.FFD.embeddedVolumes["child%d_axis" % (iChild)].N
+            for childName, child in self.children.items():
+                N = self.FFD.embeddedVolumes[f"{childName}_axis"].N
                 # Derivative of reference axis points wrt global DVs at this level
-                self.children[iChild].dXrefdXdvg = np.zeros((N * 3, self.nDV_T))
+                child.dXrefdXdvg = np.zeros((N * 3, self.nDV_T))
 
-                N = self.FFD.embeddedVolumes["child%d_coef" % (iChild)].N
+                N = self.FFD.embeddedVolumes[f"{childName}_coef"].N
                 # derivative of the control points wrt the global DVs at this level
-                self.children[iChild].dCcdXdvg = np.zeros((N * 3, self.nDV_T))
+                child.dCcdXdvg = np.zeros((N * 3, self.nDV_T))
 
             # We need to save the reference state so that we can always start
             # from the same place when calling _update_deriv
@@ -4101,12 +4133,12 @@ class DVGeometry(BaseDVGeometry):
             # Create the storage arrays for the information that must be
             # passed to the children
 
-            for iChild in range(len(self.children)):
-                N = self.FFD.embeddedVolumes["child%d_axis" % (iChild)].N
-                self.children[iChild].dXrefdXdvl = np.zeros((N * 3, self.nDV_T))
+            for childName, child in self.children.items():
+                N = self.FFD.embeddedVolumes[f"{childName}_axis"].N
+                child.dXrefdXdvl = np.zeros((N * 3, self.nDV_T))
 
-                N = self.FFD.embeddedVolumes["child%d_coef" % (iChild)].N
-                self.children[iChild].dCcdXdvl = np.zeros((N * 3, self.nDV_T))
+                N = self.FFD.embeddedVolumes[f"{childName}_coef"].N
+                child.dCcdXdvl = np.zeros((N * 3, self.nDV_T))
 
             iDVSpanwiseLocal = self.nDVSW_count
             for key in self.DV_listSpanwiseLocal:
@@ -4137,11 +4169,11 @@ class DVGeometry(BaseDVGeometry):
                             # for each node effected by the dv_SWLocal[j]
                             Jacobian[irow, iDVSpanwiseLocal] = 1.0
 
-                        for iChild in range(len(self.children)):
+                        for childName, child in self.children.items():
                             # Get derivatives of child ref axis and FFD control
                             # points w.r.t. parent's FFD control points
-                            dXrefdCoef = self.FFD.embeddedVolumes["child%d_axis" % (iChild)].dPtdCoef
-                            dCcdCoef = self.FFD.embeddedVolumes["child%d_coef" % (iChild)].dPtdCoef
+                            dXrefdCoef = self.FFD.embeddedVolumes[f"{childName}_axis"].dPtdCoef
+                            dCcdCoef = self.FFD.embeddedVolumes[f"{childName}_coef"].dPtdCoef
 
                             # derivative of Change in the FFD coef due to DVs
                             # same as Jacobian above, but differnt ordering
@@ -4163,8 +4195,8 @@ class DVGeometry(BaseDVGeometry):
 
                             # TODO: the += here is to allow recursion check this with multiple nesting
                             # levels
-                            self.children[iChild].dXrefdXdvl[:, iDVSpanwiseLocal] += dXrefdXdvl
-                            self.children[iChild].dCcdXdvl[:, iDVSpanwiseLocal] += dCcdXdvl
+                            child.dXrefdXdvl[:, iDVSpanwiseLocal] += dXrefdXdvl
+                            child.dCcdXdvl[:, iDVSpanwiseLocal] += dCcdXdvl
 
                         iDVSpanwiseLocal += 1
                 else:
@@ -4193,12 +4225,12 @@ class DVGeometry(BaseDVGeometry):
             # Create the storage arrays for the information that must be
             # passed to the children
 
-            for iChild in range(len(self.children)):
-                N = self.FFD.embeddedVolumes["child%d_axis" % (iChild)].N
-                self.children[iChild].dXrefdXdvl = np.zeros((N * 3, self.nDV_T))
+            for childName, child in self.children.items():
+                N = self.FFD.embeddedVolumes[f"{childName}_axis"].N
+                child.dXrefdXdvl = np.zeros((N * 3, self.nDV_T))
 
-                N = self.FFD.embeddedVolumes["child%d_coef" % (iChild)].N
-                self.children[iChild].dCcdXdvl = np.zeros((N * 3, self.nDV_T))
+                N = self.FFD.embeddedVolumes[f"{childName}_coef"].N
+                child.dCcdXdvl = np.zeros((N * 3, self.nDV_T))
 
             iDVSectionLocal = self.nDVSL_count
             for key in self.DV_listSectionLocal:
@@ -4221,9 +4253,9 @@ class DVGeometry(BaseDVGeometry):
                         # rows = range(coef*3,(coef+1)*3)
                         # Jacobian[rows, iDVSectionLocal] += R.dot(T.dot(inFrame))
                         Jacobian[coef * 3 : (coef + 1) * 3, iDVSectionLocal] += R.dot(T.dot(inFrame))
-                        for iChild in range(len(self.children)):
-                            dXrefdCoef = self.FFD.embeddedVolumes["child%d_axis" % (iChild)].dPtdCoef
-                            dCcdCoef = self.FFD.embeddedVolumes["child%d_coef" % (iChild)].dPtdCoef
+                        for childName, child in self.children.items():
+                            dXrefdCoef = self.FFD.embeddedVolumes[f"{childName}_axis"].dPtdCoef
+                            dCcdCoef = self.FFD.embeddedVolumes[f"{childName}_coef"].dPtdCoef
 
                             tmp = np.zeros(self.FFD.coef.shape, dtype="d")
 
@@ -4242,8 +4274,8 @@ class DVGeometry(BaseDVGeometry):
 
                             # TODO: the += here is to allow recursion check this with multiple nesting
                             # levels
-                            self.children[iChild].dXrefdXdvl[:, iDVSectionLocal] += dXrefdXdvl
-                            self.children[iChild].dCcdXdvl[:, iDVSectionLocal] += dCcdXdvl
+                            child.dXrefdXdvl[:, iDVSectionLocal] += dXrefdXdvl
+                            child.dCcdXdvl[:, iDVSectionLocal] += dCcdXdvl
                         iDVSectionLocal += 1
                 else:
                     iDVSectionLocal += self.DV_listSectionLocal[key].nVal
@@ -4270,12 +4302,12 @@ class DVGeometry(BaseDVGeometry):
 
             # Create the storage arrays for the information that must be
             # passed to the children
-            for iChild in range(len(self.children)):
-                N = self.FFD.embeddedVolumes["child%d_axis" % (iChild)].N
-                self.children[iChild].dXrefdXdvl = np.zeros((N * 3, self.nDV_T))
+            for childName, child in self.children.items():
+                N = self.FFD.embeddedVolumes[f"{childName}_axis"].N
+                child.dXrefdXdvl = np.zeros((N * 3, self.nDV_T))
 
-                N = self.FFD.embeddedVolumes["child%d_coef" % (iChild)].N
-                self.children[iChild].dCcdXdvl = np.zeros((N * 3, self.nDV_T))
+                N = self.FFD.embeddedVolumes[f"{childName}_coef"].N
+                child.dCcdXdvl = np.zeros((N * 3, self.nDV_T))
 
             iDVLocal = self.nDVL_count
             for key in self.DV_listLocal:
@@ -4309,11 +4341,11 @@ class DVGeometry(BaseDVGeometry):
                             irow = pt_dv[0] * 3 + pt_dv[1]
                             Jacobian[irow, iDVLocal] = 1.0
 
-                        for iChild in range(len(self.children)):
+                        for childName, child in self.children.items():
                             # Get derivatives of child ref axis and FFD control
                             # points w.r.t. parent's FFD control points
-                            dXrefdCoef = self.FFD.embeddedVolumes["child%d_axis" % (iChild)].dPtdCoef
-                            dCcdCoef = self.FFD.embeddedVolumes["child%d_coef" % (iChild)].dPtdCoef
+                            dXrefdCoef = self.FFD.embeddedVolumes[f"{childName}_axis"].dPtdCoef
+                            dCcdCoef = self.FFD.embeddedVolumes[f"{childName}_coef"].dPtdCoef
 
                             tmp = np.zeros(self.FFD.coef.shape, dtype="d")
 
@@ -4343,8 +4375,8 @@ class DVGeometry(BaseDVGeometry):
 
                             # TODO: the += here is to allow recursion check this with multiple nesting
                             # levels
-                            self.children[iChild].dXrefdXdvl[:, iDVLocal] += dXrefdXdvl
-                            self.children[iChild].dCcdXdvl[:, iDVLocal] += dCcdXdvl
+                            child.dXrefdXdvl[:, iDVLocal] += dXrefdXdvl
+                            child.dCcdXdvl[:, iDVLocal] += dCcdXdvl
                         iDVLocal += 1
                 else:
                     iDVLocal += self.DV_listLocal[key].nVal
@@ -4506,8 +4538,8 @@ class DVGeometry(BaseDVGeometry):
             vol_counter += 1
 
         # Write children volumes:
-        for iChild in range(len(self.children)):
-            vol_counter += self.children[iChild]._writeVols(handle, vol_counter, solutionTime)
+        for child in self.children.values():
+            vol_counter += child._writeVols(handle, vol_counter, solutionTime)
 
         return vol_counter
 
@@ -4523,7 +4555,7 @@ class DVGeometry(BaseDVGeometry):
 
         print("Computing Analytic Jacobian...")
         self.zeroJacobians(ptSetName)
-        for child in self.children:
+        for child in self.children.values():
             child.zeroJacobians(ptSetName)
 
         self.computeTotalJacobian(ptSetName)
@@ -4664,7 +4696,7 @@ class DVGeometry(BaseDVGeometry):
                 DVCountSpanLoc += 1
                 self.DV_listSpanwiseLocal[key].value[j] = refVal
 
-        for child in self.children:
+        for child in self.children.values():
             child.checkDerivatives(ptSetName)
 
     def printDesignVariables(self):
@@ -4686,7 +4718,7 @@ class DVGeometry(BaseDVGeometry):
             for i in range(self.DV_listSectionLocal[dsl].nVal):
                 print("%20.15f" % (self.DV_listSectionLocal[dsl].value[i]))
 
-        for child in self.children:
+        for child in self.children.values():
             child.printDesignVariables()
 
     def sectionFrame(self, sectionIndex, sectionTransform, sectionLink, ivol=0, orient0=None, orient2="svd", orient2dir=None):
