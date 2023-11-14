@@ -19,7 +19,12 @@ from .gearPostConstraint import GearPostConstraint
 from .locationConstraint import LocationConstraint
 from .planarityConstraint import PlanarityConstraint
 from .radiusConstraint import RadiusConstraint
-from .thicknessConstraint import ThicknessConstraint, ThicknessToChordConstraint
+from .thicknessConstraint import (
+    KSMaxThicknessToChordConstraint,
+    TESlopeConstraint,
+    ThicknessConstraint,
+    ThicknessToChordConstraint,
+)
 from .volumeConstraint import CompositeVolumeConstraint, TriangulatedVolumeConstraint, VolumeConstraint
 
 
@@ -1272,7 +1277,7 @@ class DVConstraints:
 
         chordDir : list or array or length 3
             The direction defining "chord". This will typically be the
-            xasis ([1,0,0]). The magnitude of the vector doesn't
+            xaxis ([1,0,0]). The magnitude of the vector doesn't
             matter.
 
         lower : float or array of size nCon
@@ -1351,7 +1356,7 @@ class DVConstraints:
             # Fourth point is along the chordDir
             coords[i, 3] = coords[i, 2] + 0.1 * height * chordDir
 
-        # Create the thickness constraint object:
+        # Create the thickness constraint object
         coords = coords.reshape((nCon * 4, 3))
 
         typeName = "thickCon"
@@ -3204,6 +3209,342 @@ class DVConstraints:
             upper=None,
             DVGeo=DVGeo,
             config=config,
+        )
+
+    def addKSMaxThicknessToChordConstraint(
+        self,
+        lePt,
+        tePt,
+        axis,
+        nChord=50,
+        pctChordStart=0.01,
+        pctChordEnd=0.99,
+        conType="full_chord",
+        divideByChord=True,
+        rho=1000.0,
+        lower=None,
+        upper=None,
+        scale=1.0,
+        scaled=True,
+        name=None,
+        addToPyOpt=True,
+        surfaceName="default",
+        DVGeoName="default",
+        compNames=None,
+    ):
+        r"""Add an aggregated KS max constraint over a set of thickness
+        over chord toothpick constraints.
+
+        This constraint uses a KS function to approximate a differentiable
+        maximum over a set of t/c constraints.  The t/c is computed in
+        two different ways.
+
+        1) ``conType="full_chord"``: The length of each toothpick is
+           divided by the length of a linearly approximated chord line from
+           the leading to trailing edge points.
+
+        2) ``conType="relative_chord"``: The length of each toothpick is
+           divided by the length of a projected vector in the chord
+           direction, as specified by ``chordDir``.  The underlying t/c values
+           are computed in the same fashion as the ``addThicknessToChordConstraints1D``
+           method.
+
+        Parameters
+        ----------
+        lePt : list or array of size (1 x 3)
+            A singe point on the leading edge.
+
+        tePt : list or array of size (1 x 3)
+            A single point on the trailing edge.
+
+        nCon : int
+            The number of 1D toothpick constraints to add between the
+            lePt and tePt.
+
+        axis : list or array of length 3
+            The direction along which the projections will occur.
+            Typically this will be y or z axis ([0,1,0] or [0,0,1])
+
+        conType : str, optional
+            The type of underlying t/c constraint (See description above),
+            by default "full_chord"
+
+        chordDir : list or np.ndarray, optional
+            A vector defining the chord direction. This is only used
+            if ``conType="relative_chord"``, by default None
+
+        rho : float, optional
+            The KS coefficient that controls the accuracy of the maximum
+            calculation.  Smaller values will give more conservative
+            esitmates and larger values will more closely approximate
+            the maximum, by default 1000.0
+
+        lower : float, optional
+            The lower bound, by default 1.0
+
+        upper : float, optional
+            The upper bound, by default 3.0
+
+        scale : float or array of size nCon
+            This is the optimization scaling of the
+            constraint. Typically this parameter will not need to be
+            changed. If the thickness constraints are scaled, this
+            already results in well-scaled constraint values, and
+            scale can be left at 1.0. If scaled=False, it may changed
+            to a more suitable value of the resulting physical
+            thickness have magnitudes vastly different than O(1).
+
+        scaled : bool
+            Flag specifying whether or not the constraint is to be
+            implemented in a scaled fashion or not.
+
+            * scaled=True: The initial t/c of each slope
+              constraint is defined to be 1.0. In this case, the lower
+              and upper bounds are given in multiple of the initial
+              location. lower=0.85, upper=1.15, would allow for 15%
+              change in each direction from the original slope.
+
+            * scaled=False: No scaling is applied and the absolute t/c
+              should be used for lower and upper bounds.
+
+        name : str
+            Normally this does not need to be set. Only use this if
+            you have multiple DVCon objects and the constraint names
+            need to be distinguished **or** you are using this set of
+            thickness constraints for something other than a direct
+            constraint in pyOptSparse.
+
+        addToPyOpt : bool
+            Normally this should be left at the default of True. If
+            the values need to be processed (modified) *before* they are
+            given to the optimizer, set this flag to False.
+
+        DVGeoName : str
+            Name of the DVGeo object to compute the constraint with. You only
+            need to set this if you're using multiple DVGeo objects
+            for a problem. For backward compatibility, the name is 'default' by default
+
+        compNames : list
+            If using DVGeometryMulti, the components to which the point set associated
+            with this constraint should be added, by default None. If
+            None, the point set is added to all components.
+        """
+        self._checkDVGeo(DVGeoName)
+
+        p0, p1, p2 = self._getSurfaceVertices(surfaceName=surfaceName)
+
+        # Initialize the coordinates
+        coords = np.zeros((nChord, 2, 3))
+
+        # Create the constraint lines
+        lePt = np.array(lePt)
+        tePt = np.array(tePt)
+
+        ptStart = lePt + pctChordStart * (tePt - lePt)
+        ptEnd = lePt + pctChordEnd * (tePt - lePt)
+
+        # Create the constraint lines
+        line = Curve(X=np.array([ptStart, ptEnd]), k=2)  # Linear b-spline
+        s = np.linspace(0, 1, nChord)  # parameteric points
+        X = line(s)  # Evaluate the parameteric points on the b-spline
+
+        # Project all the points
+        for i in range(nChord):
+            # Project actual node
+            up, down, fail = geo_utils.projectNode(X[i], axis, p0, p1 - p0, p2 - p0)
+
+            if fail > 0:
+                raise Error(
+                    "There was an error projecting a node "
+                    "at (%f, %f, %f) with normal (%f, %f, %f)." % (X[i, 0], X[i, 1], X[i, 2], axis[0], axis[1], axis[2])
+                )
+
+            coords[i, 0] = up
+            coords[i, 1] = down
+
+        # Add the coordinates to the coordinate matrix
+        coords = coords.reshape((nChord * 2, 3))
+
+        typeName = "thickCon"
+        if typeName not in self.constraints:
+            self.constraints[typeName] = OrderedDict()
+
+        if name is None:
+            conName = f"{self.name}_ksmax_thickness_to_chord_constraints_{len(self.constraints[typeName])}"
+        else:
+            conName = name
+
+        self.constraints[typeName][conName] = KSMaxThicknessToChordConstraint(
+            conName,
+            coords,
+            np.array(lePt),
+            np.array(tePt),
+            rho,
+            divideByChord,
+            lower,
+            upper,
+            scaled,
+            scale,
+            self.DVGeometries[DVGeoName],
+            addToPyOpt,
+            compNames,
+        )
+
+    def addTESlopeConstraint(
+        self,
+        lePt,
+        tePt,
+        axis,
+        pctChordStart=0.9,
+        pctChordEnd=0.99,
+        nCon=10,
+        lower=1.0,
+        upper=3.0,
+        scaled=True,
+        scale=1.0,
+        name=None,
+        addToPyOpt=True,
+        surfaceName="default",
+        DVGeoName="default",
+        compNames=None,
+    ):
+        r"""
+        Add a set of trailing edge slope constraints oriented along a
+        poly-line.
+
+        This is a specialized constraint that controls the slope of an
+        airfoil section near the trailing edge.  First, 1D thickness
+        constraints are added along a polyline specified by the argument
+        ptList.  Next, the cumulative arc along the chord line is computed
+        for each thickness constraint.  Finally, each thickness is
+        divided by the cumulative chord length.  The result is a linear
+        relationship between the thickness and the distance of the
+        thickness consraint from the trailing edge.
+
+        Parameters
+        ----------
+        lePt : list or array of size (1 x 3)
+            A singe point on the leading edge.
+
+        tePt : list or array of size (1 x 3)
+            A single point on the trailing edge.
+
+        axis : list or array of length 3
+            The direction along which the projections will occur.
+            Typically this will be y or z axis ([0,1,0] or [0,0,1])
+
+        pctChordStart : float
+            The normalized chord value for the start of the slope
+            constraints, by default 0.9
+
+        pctChordEnd : float
+            The normalized chord value for the end of the slope
+            constraints, by default 0.99
+
+        nCon : int
+            The number of thickness to chord ratio constraints to add,
+            by default 10.
+
+        lower : float
+            The lower bound for the slope, by default 1.0.  This will
+            be a relative bound if the argument ``scaled=True``,
+            otherwise this will be an absolute bound.
+
+        upper : float
+            The upper bound for the slope, by default 3.0.  This will
+            be a relative bound if the argument ``scaled=True``,
+            otherwise this will be an absolute bound.
+
+        scaled : bool
+            Flag specifying whether or not the constraint is to be
+            implemented in a scaled fashion or not.
+
+            * scaled=True: The initial t/c of each slope
+              constraint is defined to be 1.0. In this case, the lower
+              and upper bounds are given in multiple of the initial
+              location. lower=0.85, upper=1.15, would allow for 15%
+              change in each direction from the original slope.
+
+            * scaled=False: No scaling is applied and the absolute t/c
+              should be used for lower and upper bounds.
+
+        scale : float or array of size nCon
+            This is the optimization scaling of the
+            constraint. Typically this parameter will not need to be
+            changed. If the thickness constraints are scaled, this
+            already results in well-scaled constraint values, and
+            scale can be left at 1.0. If scaled=False, it may changed
+            to a more suitable value of the resulting physical
+            thickness have magnitudes vastly different than O(1).
+
+        name : str
+            Normally this does not need to be set. Only use this if
+            you have multiple DVCon objects and the constraint names
+            need to be distinguished **or** you are using this set of
+            thickness constraints for something other than a direct
+            constraint in pyOptSparse.
+
+        addToPyOpt : bool
+            Normally this should be left at the default of True. If
+            the values need to be processed (modified) *before* they are
+            given to the optimizer, set this flag to False.
+
+        DVGeoName : str
+            Name of the DVGeo object to compute the constraint with. You only
+            need to set this if you're using multiple DVGeo objects
+            for a problem. For backward compatibility, the name is 'default' by default
+
+        compNames : list
+            If using DVGeometryMulti, the components to which the point set associated
+            with this constraint should be added, by default None. If
+            None, the point set is added to all components.
+
+        """
+        self._checkDVGeo(DVGeoName)
+
+        p0, p1, p2 = self._getSurfaceVertices(surfaceName=surfaceName)
+
+        # Initialize the coordinates
+        coords = np.zeros((nCon * 2 + 1, 3))
+
+        lePt = np.array(lePt)
+        tePt = np.array(tePt)
+
+        ptStart = lePt + pctChordStart * (tePt - lePt)
+        ptEnd = lePt + pctChordEnd * (tePt - lePt)
+
+        # Create the constraint lines
+        line = Curve(X=np.array([ptStart, ptEnd]), k=2)  # Linear b-spline
+        s = np.linspace(0, 1, nCon)  # parameteric points
+        X = line(s)  # Evaluate the parameteric points on the b-spline
+
+        # Loop over constraints and project to get the toothpicks
+        for i in range(nCon):
+            up, down, fail = geo_utils.projectNode(X[i], axis, p0, p1 - p0, p2 - p0)
+
+            if fail > 0:
+                raise Error(
+                    "There was an error projecting a node "
+                    "at (%f, %f, %f) with normal (%f, %f, %f)." % (X[i, 0], X[i, 1], X[i, 2], axis[0], axis[1], axis[2])
+                )
+
+            coords[2 * i] = up
+            coords[2 * i + 1] = down
+
+        # Add the trailing edge point to the end of the coordinate array
+        coords[-1] = tePt
+
+        typeName = "thickCon"
+        if typeName not in self.constraints:
+            self.constraints[typeName] = OrderedDict()
+
+        if name is None:
+            conName = f"{self.name}_te_slope_constraints_{len(self.constraints[typeName])}"
+        else:
+            conName = name
+
+        self.constraints[typeName][conName] = TESlopeConstraint(
+            conName, coords, lower, upper, scaled, scale, self.DVGeometries[DVGeoName], addToPyOpt, compNames
         )
 
     def _checkDVGeo(self, name="default"):
