@@ -406,6 +406,8 @@ class pyNetwork:
         if curves is None:
             curves = np.arange(self.nCurve)
 
+        points = np.atleast_2d(points)
+
         N = len(points)
         S = np.zeros((N, len(curves)))
         D = np.zeros((N, len(curves), 3))

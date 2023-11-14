@@ -212,7 +212,7 @@ class geoDVSpanwiseLocal(geoDV):
 
 
 class geoDVSectionLocal(geoDV):
-    def __init__(self, name, lower, upper, scale, axis, coefListIn, mask, config, sectionTransform, sectionLink):
+    def __init__(self, name, lower, upper, scale, axis, coefListIn, mask, config, sectionTransform, sectionLink, interpPts, normals, centers):
         """
         Create a set of geometric design variables which change the shape
         of a surface.
@@ -233,6 +233,10 @@ class geoDVSectionLocal(geoDV):
         self.sectionLink = sectionLink
 
         self.axis = axis
+        self.interpPts = interpPts
+
+        self.normals = normals
+        self.centers = centers
 
     def __call__(self, coef, coefRotM, config):
         """
@@ -246,6 +250,18 @@ class geoDVSectionLocal(geoDV):
 
                 R = coefRotM[self.coefList[i]].real
                 coef[self.coefList[i]] += R.dot(T.dot(inFrame))
+
+            if self.interpPts is not None:
+                # we have a dictionary of points that will need to be linearly interpolated based on what the other values do
+                for idx, sources in self.interpPts.items():
+                    # loop over the points in sources and add their changes with their weights
+                    for source_idx, weight in sources.items():
+                        T = self.sectionTransform[self.sectionLink[idx]]
+                        inFrame = np.zeros(3)
+                        inFrame[self.axis] = self.value[source_idx].real * weight
+                        R = coefRotM[idx].real
+                        coef[idx] += R.dot(T.dot(inFrame))
+
         return coef
 
     def updateComplex(self, coef, coefRotM, config):
@@ -257,7 +273,20 @@ class geoDVSectionLocal(geoDV):
 
                 R = coefRotM[self.coefList[i]]
                 coef[self.coefList[i]] += R.dot(T.dot(inFrame)).imag * 1j
+
+            if self.interpPts is not None:
+                for idx, sources in self.interpPts.items():
+                    # loop over the points in sources and add their changes with their weights
+                    for source_idx, weight in sources.items():
+                        T = self.sectionTransform[self.sectionLink[idx]]
+                        inFrame = np.zeros(3, "D")
+                        inFrame[self.axis] = self.value[source_idx] * weight
+                        R = coefRotM[idx]
+                        coef[idx] += R.dot(T.dot(inFrame)).imag * 1j
         return coef
+
+    def getSectionPlanes(self):
+        return self.normals, self.centers
 
     def mapIndexSets(self, indSetA, indSetB):
         """

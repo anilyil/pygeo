@@ -164,13 +164,27 @@ class PointSelect:
             # Get current bounds
             ilow = self.ijkBounds[iVol][0][0]
             ihigh = self.ijkBounds[iVol][0][1]
+            if len(self.ijkBounds[iVol][0]) == 3:
+                istep = self.ijkBounds[iVol][0][2]
+            else:
+                istep = 1
+
             jlow = self.ijkBounds[iVol][1][0]
             jhigh = self.ijkBounds[iVol][1][1]
+            if len(self.ijkBounds[iVol][1]) == 3:
+                jstep = self.ijkBounds[iVol][1][2]
+            else:
+                jstep = 1
+
             klow = self.ijkBounds[iVol][2][0]
             khigh = self.ijkBounds[iVol][2][1]
+            if len(self.ijkBounds[iVol][2]) == 3:
+                kstep = self.ijkBounds[iVol][2][2]
+            else:
+                kstep = 1
 
             # Retrieve current points
-            indList.extend(DVGeo.FFD.topo.lIndex[iVol][ilow:ihigh, jlow:jhigh, klow:khigh].flatten())
+            indList.extend(DVGeo.FFD.topo.lIndex[iVol][ilow:ihigh:istep, jlow:jhigh:jstep, klow:khigh:kstep].flatten())
 
         # Now get the corresponding coordinates
         ptList = [DVGeo.FFD.coef[ii] for ii in indList]

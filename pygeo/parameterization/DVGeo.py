@@ -1259,8 +1259,10 @@ class DVGeometry(BaseDVGeometry):
         volList=None,
         orient0=None,
         orient2="svd",
+        orient2dir=None,
         config=None,
         prependName=True,
+        interpPts=None,
     ):
         """
         Add one or more section local design variables to the DVGeometry
@@ -1466,14 +1468,22 @@ class DVGeometry(BaseDVGeometry):
                     raise Error(
                         "If an array is given for orient0, the row dimension" " must be equal to the length of volList."
                     )
+
+            # save the normals and section points to be used later
+            normals = np.zeros((0, 3))
+            centers = np.zeros((0, 3))
+
             for i, iVol in enumerate(volList):
-                self.sectionFrame(secIndex[i], secTransform, secLink, iVol, orient0[i], orient2=orient2)
+                nSections, sec_normals, sec_centers = self.sectionFrame(secIndex[i], secTransform, secLink, iVol, orient0=orient0[i], orient2=orient2, orient2dir=orient2dir)
+                normals = np.concatenate([normals, sec_normals])
+                centers = np.concatenate([centers, sec_centers])
+
         else:
             for i, iVol in enumerate(volList):
-                self.sectionFrame(secIndex[i], secTransform, secLink, iVol, orient2=orient2)
+                self.sectionFrame(secIndex[i], secTransform, secLink, iVol, orient2=orient2, orient2dir=orient2dir)
 
         self.DV_listSectionLocal[dvName] = geoDVSectionLocal(
-            dvName, lower, upper, scale, axis, ind, self.masks, config, secTransform, secLink
+            dvName, lower, upper, scale, axis, ind, self.masks, config, secTransform, secLink, interpPts, normals, centers
         )
 
         return self.DV_listSectionLocal[dvName].nVal
@@ -3059,8 +3069,8 @@ class DVGeometry(BaseDVGeometry):
         f.write("ZONE NODES=%d ELEMENTS=%d ZONETYPE=FELINESEG\n" % (self.nPtAttach * 2, self.nPtAttach))
         f.write("DATAPACKING=POINT\n")
         for ipt in range(self.nPtAttach):
-            pt1 = self.refAxis.curves[self.curveIDs[ipt]](self.links_s[ipt])
-            pt2 = self.links_x[ipt] + pt1
+            pt1 = (self.refAxis.curves[self.curveIDs[ipt]](self.links_s[ipt])).real
+            pt2 = (self.links_x[ipt] + pt1).real
 
             f.write(f"{pt1[0]:.12g} {pt1[1]:.12g} {pt1[2]:.12g}\n")
             f.write(f"{pt2[0]:.12g} {pt2[1]:.12g} {pt2[2]:.12g}\n")
@@ -3491,6 +3501,35 @@ class DVGeometry(BaseDVGeometry):
                     tmpIDs, tmpS0 = self.refAxis.projectRays(
                         curPts, axis, curves=[curveID], raySize=self.axis[key]["raySize"]
                     )
+                elif isinstance(self.axis[key]["axis"], str) and self.axis[key]["axis"] == "svd":
+                    # we will do an SVD. use the dv name provided for the rotAxisVar
+                    varname = self.axis[key]["rotAxisVar"]
+                    slVar = self.DV_listSectionLocal[varname]
+                    normals, centers = slVar.getSectionPlanes()
+
+                    # we need to figure out which point came from which section.
+                    # for now, do it inefficiently; compute the distance from each point
+                    # to all planes, and pick the closest one for that point.
+
+                    tmpIDs = []
+                    tmpS0 = []
+
+                    for ipt in range(len(curPts)):
+                        # vectorized distance computation
+                        v1 = curPts[ipt] - centers
+                        # dot with each normal
+                        dists = np.sum(np.multiply(v1, normals), axis=1)
+                        dists = np.abs(dists)
+
+                        # pick the minimum distance section
+                        i_min = np.argmin(dists)
+
+                        # project to this section
+                        tid, ts0 = self.refAxis.intersectPlanes(
+                            curPts[ipt], normals[i_min], curves=[curveID], raySize=self.axis[key]["raySize"]
+                        )
+                        tmpIDs.extend(tid)
+                        tmpS0.extend(ts0)
 
                 elif isinstance(self.axis[key]["axis"], np.ndarray) and len(self.axis[key]["axis"]) == 3:
                     # we want to intersect a plane that crosses the cur pts and the normal
@@ -4746,7 +4785,7 @@ class DVGeometry(BaseDVGeometry):
         for child in self.children.values():
             child.printDesignVariables()
 
-    def sectionFrame(self, sectionIndex, sectionTransform, sectionLink, ivol=0, orient0=None, orient2="svd"):
+    def sectionFrame(self, sectionIndex, sectionTransform, sectionLink, ivol=0, orient0=None, orient2="svd", orient2dir=None):
         """
         This function computes a unique reference coordinate frame for each
         section of an FFD volume. You can choose which axis of the FFD you would
@@ -4833,6 +4872,10 @@ class DVGeometry(BaseDVGeometry):
         # Length of sectionTransform
         Tcount = len(sectionTransform)
 
+        # save the normal vector and section center
+        normals = np.zeros((nSections, 3))
+        centers = np.zeros((nSections, 3))
+
         for i in range(nSections):
             # Compute singular value decomposition of points in section (the
             # U matrix should provide us with a pretty good approximation
@@ -4843,6 +4886,8 @@ class DVGeometry(BaseDVGeometry):
             c = np.mean(X, 0)
             A = X - c
             U, _, _ = np.linalg.svd(A.T)
+
+            centers[i] = c
 
             # Choose section plane normal axis
             if orient2 == "svd":
@@ -4864,6 +4909,26 @@ class DVGeometry(BaseDVGeometry):
                 ax2 /= np.linalg.norm(ax2)
             else:
                 raise Error("orient2 must be 'svd' or 'ffd'")
+
+            # we may want to flip orient2 based on orient2dir
+            if orient2dir is not None:
+                if "-" in orient2dir:
+                    fact = -1.0
+                else:
+                    fact = 1.0
+
+                if "x" in orient2dir:
+                    dirIdx = 0
+                elif "y" in orient2dir:
+                    dirIdx = 1
+                elif "z" in orient2dir:
+                    dirIdx = 2
+
+                # flip the array based on the sign of the entry in dirIdx. We also multiply by fact
+                # so that users can pick the negative direction as well.
+                ax2 *= np.sign(ax2[dirIdx]) * fact
+
+            normals[i] = ax2
 
             # Options for choosing in-plane axes
             # 1. Align axis '0' with projection of the given vector on section
@@ -4899,4 +4964,4 @@ class DVGeometry(BaseDVGeometry):
                 for coef in j:
                     self.coefRotM[coef] = np.eye(3)
 
-        return nSections
+        return nSections, normals, centers
