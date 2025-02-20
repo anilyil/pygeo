@@ -6,6 +6,7 @@ from baseclasses.utils import Error
 from mpi4py import MPI
 import numpy as np
 from scipy import sparse
+from pathlib import Path
 
 try:
     # External modules
@@ -140,7 +141,9 @@ class DVGeometryMulti:
             procNodes = nodes[disp[self.comm.rank] : disp[self.comm.rank + 1]]
 
             # Add these points to the component DVGeo
+            # print(f"[{self.comm.rank}] Adding trimesh pointset with {procNodes.shape[0]} points")
             DVGeo.addPointSet(procNodes, "triMesh", **pointSetKwargs)
+            # print(f"[{self.comm.rank}] Done adding trimesh pointset")
         else:
             # the user has not provided a triangulated surface mesh for this file
             nodes = None
@@ -561,7 +564,7 @@ class DVGeometryMulti:
 
         # check if the ICs are up to date with the current config
         if self.updateICs or config != self.curConfig:
-            print("config from update", config)
+            # print("config from update", config)
             self._setICSurfaces(config)
             self.updateICs = False
             self.curConfig = config
@@ -1056,9 +1059,18 @@ class CompIntersection:
 
         """
 
+        # Flag for debug ouput
+        self.debug = debug
+
         # same communicator with DVGeo
         self.comm = DVGeo.comm
         self.curConfigText = ""
+
+        self.name = f"{compA}_{compB}_int"
+        self.debug_dir = f"./dvgeomulti_debug_outputs/{self.name}"
+        if self.comm.rank == 0 and self.debug:
+            Path(self.debug_dir).mkdir(parents=True, exist_ok=True)
+        self.comm.Barrier()
 
         # define epsilon as a small value to prevent division by zero in the inverse distance computation
         self.eps = 1e-20
@@ -1069,8 +1081,6 @@ class CompIntersection:
         # flag that determines if we will remesh the other side of the feature curves on compB
         self.remeshBwd = remeshBwd
 
-        # Flag for debug ouput
-        self.debug = debug
 
         # Set real or complex Fortran APIs
         self.dtype = dtype
@@ -1165,8 +1175,10 @@ class CompIntersection:
             # we save this info in lists
             self.featureCurveNames = []
             # save the curve name and march direction information
+            # print(f"[{self.comm.rank}] {self.name} saving march dirs")
             for k, v in featureCurves.items():
                 self.featureCurveNames.append(k.lower())
+                # print(f"[{self.comm.rank}]", k, v)
                 marchDirs.append(v)
 
         # now loop over the feature curves and flip if necessary
@@ -1203,8 +1215,15 @@ class CompIntersection:
                 mdir = abs(marchDirs[ii]) - 1
                 msign = np.sign(marchDirs[ii])
 
+                # print(f"[{self.comm.rank}] {self.name} checking feature curve ii={ii}")
+
+                # elem_deltas = curveNodes[newConn[:, 1]][mdir] - curveNodes[newConn[:, 0]][mdir]
+                # print(f"[{self.comm.rank}]", elem_deltas, np.average(elem_deltas))
+
                 # check if we need to flip
+                # print(f"[{self.comm.rank}] {curveNodes[newConn[0][0]]} {curveNodes[newConn[0][1]]} ")
                 if msign * curveNodes[newConn[0][0]][mdir] > msign * curveNodes[newConn[0][1]][mdir]:
+                    # print(f"[{self.comm.rank}] {self.name} flipping curve {ii}")
                     # flip on both axes
                     newConn = np.flip(newConn, axis=0)
                     newConn = np.flip(newConn, axis=1)
@@ -1520,7 +1539,7 @@ class CompIntersection:
                     if self.debug:
                         ptCoords = ptsToCurves[idxs]
                         tecplot_interface.write_tecplot_scatter(
-                            f"{curveName}{self.curConfigText}.plt", curveName, ["X", "Y", "Z"], ptCoords
+                            f"{self.debug_dir}/{curveName}{self.curConfigText}.plt", curveName, ["X", "Y", "Z"], ptCoords
                         )
 
                     # also update the masking array
@@ -1820,7 +1839,7 @@ class CompIntersection:
 
             if self.debug:
                 tecplot_interface.write_tecplot_scatter(
-                    f"{curveName}_warped_pts{self.curConfigText}.plt", "intersection", ["X", "Y", "Z"], ptsOnCurve
+                    f"{self.debug_dir}/{curveName}_warped_pts{self.curConfigText}.plt", "intersection", ["X", "Y", "Z"], ptsOnCurve
                 )
 
             # conn of the current curve
@@ -1872,7 +1891,7 @@ class CompIntersection:
 
             if self.debug:
                 tecplot_interface.write_tecplot_scatter(
-                    f"{curveName}_projected_pts{self.curConfigText}.plt", curveName, ["X", "Y", "Z"], xyzProj
+                    f"{self.debug_dir}/{curveName}_projected_pts{self.curConfigText}.plt", curveName, ["X", "Y", "Z"], xyzProj
                 )
 
             # update the point coordinates on this processor.
@@ -2597,7 +2616,7 @@ class CompIntersection:
             if self.intDir is None:
                 # we have multiple intersection curves but the user did not specify which direction to pick
                 for i in range(len(newConn)):
-                    curvename = f"{self.compA.name}_{self.compB.name}_{i}{self.curConfigText}"
+                    curvename = f"{self.debug_dir}/{self.compA.name}_{self.compB.name}_{i}{self.curConfigText}"
                     tecplot_interface.writeTecplotFEdata(intNodes, newConn[i], curvename, curvename)
                 raise Error(
                     f"More than one intersection curve between comps {self.compA.name} and {self.compB.name}. "
@@ -2609,13 +2628,18 @@ class CompIntersection:
             else:
                 int_centers = np.zeros(len(newConn), dtype=self.dtype)
                 # we will figure out the locations of these points and pick the one closer to the user picked direction
+                # if self.comm == 0:
+                #     print("newconn", newConn)
+                #     print("intNodes", intNodes)
                 for i in range(len(newConn)):
                     # get all the points
-                    int_pts = intNodes[newConn[i]][:, 0]
+                    int_pts = intNodes[newConn[i][:, 0]]
+                    # if self.comm == 0:
+                    #     print(f"int_pts {i}", int_pts)
 
                     # average the values
                     # the API uses a 1 based indexing, but here, we convert to a zero based indexing
-                    int_centers[i] = np.average(int_pts[abs(self.intDir) - 1])
+                    int_centers[i] = np.average(int_pts[:, abs(self.intDir) - 1])
 
                 # multiply the values with the sign of intDir
                 int_centers *= np.sign(self.intDir)
@@ -2797,7 +2821,7 @@ class CompIntersection:
 
         # Output the intersection curve
         if self.comm.rank == 0 and self.debug:
-            curvename = f"{self.compA.name}_{self.compB.name}_{self.counter}{self.curConfigText}"
+            curvename = f"{self.debug_dir}/{self.compA.name}_{self.compB.name}_{self.counter}{self.curConfigText}"
             tecplot_interface.writeTecplotFEdata(intNodes, seamConn, curvename, curvename)
 
         # we need to re-mesh feature curves if the user wants...
@@ -2993,7 +3017,7 @@ class CompIntersection:
 
             # Output the feature curves
             if self.comm.rank == 0 and self.debug:
-                curvename = f"featureCurves_{self.counter}{self.curConfigText}"
+                curvename = f"{self.debug_dir}/featureCurves_{self.counter}{self.curConfigText}"
                 tecplot_interface.writeTecplotFEdata(remeshedCurves, remeshedCurveConnFull, curvename, curvename)
 
             # now we are done going over curves,
@@ -3319,7 +3343,7 @@ class CompIntersection:
         if self.debug:
             data = [np.append(points[i], surfaceDist[i]) for i in surfaceIndMap]
             tecplot_interface.write_tecplot_scatter(
-                f"{surface}_points_{self.comm.rank}{self.curConfigText}.plt", f"{surface}", ["X", "Y", "Z", "dist"], data
+                f"{self.debug_dir}/{surface}_points_{self.comm.rank}{self.curConfigText}.plt", f"{surface}", ["X", "Y", "Z", "dist"], data
             )
 
         # Save the indices only if there is at least one point
