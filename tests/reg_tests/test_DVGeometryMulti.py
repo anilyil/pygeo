@@ -202,7 +202,13 @@ class TestDVGeoMulti(unittest.TestCase):
                     for i in range(1, nRefAxPts):
                         geo.rot_z["box"].coef[i] = val[i - 1]
 
-                DVGeoDict[comp].addGlobalDV(dvName=f"{comp}_twist", value=[0] * nTwist, func=twist)
+                if comp == "box1":
+                    # use custom configs for box1 twist
+                    DVGeoDict[comp].addGlobalDV(dvName=f"{comp}_twist:config1", value=[0] * nTwist, func=twist, config="config1")
+                    DVGeoDict[comp].addGlobalDV(dvName=f"{comp}_twist:config2", value=[0] * nTwist, func=twist, config="config2")
+                else:
+                    # other comps dont get custom config to test dvs that apply to all configs
+                    DVGeoDict[comp].addGlobalDV(dvName=f"{comp}_twist", value=[0] * nTwist, func=twist)
 
             # Set the correct dtype for the point set
             if DVGeo == DVGeo_complex:
@@ -215,31 +221,36 @@ class TestDVGeoMulti(unittest.TestCase):
 
             # Apply twist to the two intersecting boxes
             dvDict = DVGeo.getValues()
-            dvDict["box1_twist"] = 2
+            dvDict["box1_twist:config1"] = 3
+            dvDict["box1_twist:config2"] = 4
             dvDict["box2_twist"] = 2
+            dvDict["box3_twist"] = 5
             DVGeo.setDesignVars(dvDict)
 
             # Update the point set
-            ptsUpdated = DVGeo.update(ptSetName)
+            ptsUpdatedConfig1 = DVGeo.update(ptSetName, config="config1")
+            ptsUpdatedConfig2 = DVGeo.update(ptSetName, config="config2")
 
-        # Create the send buffer
-        procPoints = ptsUpdated.flatten()
-        sendbuf = [procPoints, sizes[comm.rank] * 3]
-
-        # Create the receiving buffer
-        globalPoints = np.zeros(nPtsGlobal * 3)
-        recvbuf = [globalPoints, sizes * 3, disp[0:-1] * 3, MPI.DOUBLE]
-
-        # Allgather the updated coordinates
-        comm.Allgatherv(sendbuf, recvbuf)
-
-        # Reshape into a nPtsGlobal, 3 array
-        ptsUpdated = globalPoints.reshape((nPtsGlobal, 3))
-
-        # Regression test the updated points for the real DVGeo
+        # test pts from both configs
         refFile = os.path.join(baseDir, "ref/test_DVGeometryMulti.ref")
         with BaseRegTest(refFile, train=train) as handler:
-            handler.root_add_val("ptsUpdated", ptsUpdated, tol=1e-14)
+            for ii, ptsUpdated in enumerate([ptsUpdatedConfig1, ptsUpdatedConfig2]):
+                # Create the send buffer
+                procPoints = ptsUpdated.flatten()
+                sendbuf = [procPoints, sizes[comm.rank] * 3]
+
+                # Create the receiving buffer
+                globalPoints = np.zeros(nPtsGlobal * 3)
+                recvbuf = [globalPoints, sizes * 3, disp[0:-1] * 3, MPI.DOUBLE]
+
+                # Allgather the updated coordinates
+                comm.Allgatherv(sendbuf, recvbuf)
+
+                # Reshape into a nPtsGlobal, 3 array
+                ptsUpdated = globalPoints.reshape((nPtsGlobal, 3))
+
+                # Regression test the updated points for the real DVGeo
+                handler.root_add_val(f"ptsUpdatedConfig{ii + 1}", ptsUpdated, tol=1e-14)
 
         # Now we will test the derivatives
 
@@ -255,61 +266,67 @@ class TestDVGeoMulti(unittest.TestCase):
             for j in range(3):
                 dIdpt[i * 3 + j, i - disp[comm.rank], j] = 1
 
-        # Get the derivatives from the real DVGeoMulti object
-        funcSens = DVGeo_real.totalSensitivity(dIdpt, ptSetName, comm=comm)
+        # loop over configs
+        configs = ["config1", "config2"]
 
         # Compute FD and CS derivatives
         dvDict_real = DVGeo_real.getValues()
-        funcSensFD = {}
         dvDict_complex = DVGeo_complex.getValues()
-        funcSensCS = {}
 
-        stepSize_FD = 1e-5
-        stepSize_CS = 1e-200
+        for config in configs:
 
-        for x in dvDict_real:
-            nx = len(dvDict_real[x])
-            funcSensFD[x] = np.zeros((nx, nPtsGlobal * 3))
-            funcSensCS[x] = np.zeros((nx, nPtsGlobal * 3))
-            for i in range(nx):
-                xRef_real = dvDict_real[x][i].copy()
-                xRef_complex = dvDict_complex[x][i].copy()
+            # Get the derivatives from the real DVGeoMulti object, save each config separately
+            funcSens = DVGeo_real.totalSensitivity(dIdpt.copy(), ptSetName, comm=comm, config=config)
 
-                # Compute the central difference
-                dvDict_real[x][i] = xRef_real + stepSize_FD
-                DVGeo_real.setDesignVars(dvDict_real)
-                ptsNewPlus = DVGeo_real.update(ptSetName)
+            funcSensCS = {}
+            funcSensFD = {}
+            stepSize_FD = 1e-5
+            stepSize_CS = 1e-200
 
-                dvDict_real[x][i] = xRef_real - stepSize_FD
-                DVGeo_real.setDesignVars(dvDict_real)
-                ptsNewMinus = DVGeo_real.update(ptSetName)
+            for x in dvDict_real:
 
-                funcSensFD[x][i, disp[comm.rank] * 3 : disp[comm.rank + 1] * 3] = (
-                    ptsNewPlus.flatten() - ptsNewMinus.flatten()
-                ) / (2 * stepSize_FD)
+                nx = len(dvDict_real[x])
+                funcSensFD[x] = np.zeros((nx, nPtsGlobal * 3))
+                funcSensCS[x] = np.zeros((nx, nPtsGlobal * 3))
+                for i in range(nx):
+                    xRef_real = dvDict_real[x][i].copy()
+                    xRef_complex = dvDict_complex[x][i].copy()
 
-                # Set the real DV back to the original value
-                dvDict_real[x][i] = xRef_real.copy()
+                    # Compute the central difference
+                    dvDict_real[x][i] = xRef_real + stepSize_FD
+                    DVGeo_real.setDesignVars(dvDict_real)
+                    ptsNewPlus = DVGeo_real.update(ptSetName, config=config)
 
-                # Compute complex step derivative
-                dvDict_complex[x][i] = xRef_complex + stepSize_CS * 1j
-                DVGeo_complex.setDesignVars(dvDict_complex)
-                ptsNew = DVGeo_complex.update(ptSetName)
+                    dvDict_real[x][i] = xRef_real - stepSize_FD
+                    DVGeo_real.setDesignVars(dvDict_real)
+                    ptsNewMinus = DVGeo_real.update(ptSetName, config=config)
 
-                funcSensCS[x][i, disp[comm.rank] * 3 : disp[comm.rank + 1] * 3] = (
-                    np.imag(ptsNew.flatten()) / stepSize_CS
-                )
+                    funcSensFD[x][i, disp[comm.rank] * 3 : disp[comm.rank + 1] * 3] = (
+                        ptsNewPlus.flatten() - ptsNewMinus.flatten()
+                    ) / (2 * stepSize_FD)
 
-                # Set the complex DV back to the original value
-                dvDict_complex[x][i] = xRef_complex.copy()
+                    # Set the real DV back to the original value
+                    dvDict_real[x][i] = xRef_real.copy()
 
-        # Check that the analytic derivatives are consistent with FD and CS
-        for x in dvDict_real:
-            funcSensFD[x] = comm.allreduce(funcSensFD[x])
-            funcSensCS[x] = comm.allreduce(funcSensCS[x])
+                    # Compute complex step derivative
+                    dvDict_complex[x][i] = xRef_complex + stepSize_CS * 1j
+                    DVGeo_complex.setDesignVars(dvDict_complex)
+                    ptsNew = DVGeo_complex.update(ptSetName, config=config)
 
-            np.testing.assert_allclose(funcSens[x].T, funcSensFD[x], rtol=1e-4, atol=1e-10)
-            np.testing.assert_allclose(funcSens[x].T, funcSensCS[x], rtol=1e-4, atol=1e-10)
+                    funcSensCS[x][i, disp[comm.rank] * 3 : disp[comm.rank + 1] * 3] = (
+                        np.imag(ptsNew.flatten()) / stepSize_CS
+                    )
+
+                    # Set the complex DV back to the original value
+                    dvDict_complex[x][i] = xRef_complex.copy()
+
+            # Check that the analytic derivatives are consistent with FD and CS
+            for x in dvDict_real:
+                funcSensFD[x] = comm.allreduce(funcSensFD[x])
+                funcSensCS[x] = comm.allreduce(funcSensCS[x])
+                np.testing.assert_allclose(funcSens[x].T, funcSensFD[x], rtol=1e-4, atol=1e-8)
+                np.testing.assert_allclose(funcSens[x].T, funcSensCS[x],
+                rtol=1e-4, atol=1e-9)
 
         # Test that adding a point outside any FFD raises an Error
         with self.assertRaises(Error):

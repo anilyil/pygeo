@@ -141,9 +141,7 @@ class DVGeometryMulti:
             procNodes = nodes[disp[self.comm.rank] : disp[self.comm.rank + 1]]
 
             # Add these points to the component DVGeo
-            # print(f"[{self.comm.rank}] Adding trimesh pointset with {procNodes.shape[0]} points")
             DVGeo.addPointSet(procNodes, "triMesh", **pointSetKwargs)
-            # print(f"[{self.comm.rank}] Done adding trimesh pointset")
         else:
             # the user has not provided a triangulated surface mesh for this file
             nodes = None
@@ -564,7 +562,6 @@ class DVGeometryMulti:
 
         # check if the ICs are up to date with the current config
         if self.updateICs or config != self.curConfig:
-            # print("config from update", config)
             self._setICSurfaces(config)
             self.updateICs = False
             self.curConfig = config
@@ -693,11 +690,12 @@ class DVGeometryMulti:
 
         """
 
-        # check if the ICs are up to date with the current config
-        if self.updateICs or config != self.curConfig:
-            self._setICSurfaces(config)
-            self.updateICs = False
-            self.curConfig = config
+        # TODO temporary solution. Ideally, we may want to track configs per pointset
+        # need to run a full update here
+        # this will set self.updateICs to False and
+        # self.curConfig to config. It will also
+        # update the underlying data for the intersections
+        self.update(ptSetName, config=config)
 
         # Compute the total Jacobian for this point set
         self._computeTotalJacobian(ptSetName, config)
@@ -1175,10 +1173,8 @@ class CompIntersection:
             # we save this info in lists
             self.featureCurveNames = []
             # save the curve name and march direction information
-            # print(f"[{self.comm.rank}] {self.name} saving march dirs")
             for k, v in featureCurves.items():
                 self.featureCurveNames.append(k.lower())
-                # print(f"[{self.comm.rank}]", k, v)
                 marchDirs.append(v)
 
         # now loop over the feature curves and flip if necessary
@@ -1215,15 +1211,15 @@ class CompIntersection:
                 mdir = abs(marchDirs[ii]) - 1
                 msign = np.sign(marchDirs[ii])
 
-                # print(f"[{self.comm.rank}] {self.name} checking feature curve ii={ii}")
+                print(f"[{self.comm.rank}] {self.name} checking feature curve ii={ii}")
 
-                # elem_deltas = curveNodes[newConn[:, 1]][mdir] - curveNodes[newConn[:, 0]][mdir]
-                # print(f"[{self.comm.rank}]", elem_deltas, np.average(elem_deltas))
+                elem_deltas = curveNodes[newConn[:, 1]][mdir] - curveNodes[newConn[:, 0]][mdir]
+                print(f"[{self.comm.rank}]", elem_deltas, np.average(elem_deltas))
+                print(f"[{self.comm.rank}] {curveNodes[newConn[0][0]]} {curveNodes[newConn[0][1]]} ")
 
                 # check if we need to flip
-                # print(f"[{self.comm.rank}] {curveNodes[newConn[0][0]]} {curveNodes[newConn[0][1]]} ")
                 if msign * curveNodes[newConn[0][0]][mdir] > msign * curveNodes[newConn[0][1]][mdir]:
-                    # print(f"[{self.comm.rank}] {self.name} flipping curve {ii}")
+                    print(f"[{self.comm.rank}] {self.name} flipping curve {ii}")
                     # flip on both axes
                     newConn = np.flip(newConn, axis=0)
                     newConn = np.flip(newConn, axis=1)
