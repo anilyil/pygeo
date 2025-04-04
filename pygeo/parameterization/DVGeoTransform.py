@@ -6,12 +6,10 @@ import copy
 from baseclasses.utils import Error
 from mpi4py import MPI
 import numpy as np
-from scipy import sparse
 
 from .designVars import geoDVTransformation
 
 
-# TODO inherit from basedvgeometry?
 class DVGeometryTransform:
     """
     A class for manipulating multiple components using multiple FFDs
@@ -30,9 +28,6 @@ class DVGeometryTransform:
     checkDVs : bool, optional
         Flag to check whether there are duplicate DV names in or across components.
 
-    isComplex : bool, optional
-        Flag to use complex variables for complex step verification.
-
     """
 
     def __init__(self, DVGeoTop, name=None, checkDVs=True, isComplex=False):
@@ -44,7 +39,6 @@ class DVGeometryTransform:
         self.ptSetNames = []
         self.updated = {}
         self.checkDVs = checkDVs
-        self.isComplex = isComplex
 
     def addTransformationFunction(self, funcName, funcCallback):
 
@@ -106,6 +100,10 @@ class DVGeometryTransform:
         # Flag all the pointSets as not being up to date:
         for pointSet in self.updated:
             self.updated[pointSet] = False
+
+        # also zero out the jacobians
+        for ptSet in self.points.values():
+            ptSet.dPtdDV = None
 
     def getValues(self):
         """
@@ -213,11 +211,15 @@ class DVGeometryTransform:
         if transFuncName is not None:
             transFunc = self.transormationFuncs[transFuncName]
             pointsBase = self.points[ptSetName].pointsBase
-            dPtdDV = transFunc.getJacobian(pointsBase, config=config)
-            # save the jacobian. this will be called more times
-            self.points[ptSetName].dPtdDV = dPtdDV
 
-            dIdx_local = dPtdDV.T.dot(dIdpt)
+            if self.points[ptSetName].dPtdDV is None:
+                dPtdDV = transFunc.getJacobian(pointsBase, config=config)
+                # save the jacobian. this will be called more times
+                self.points[ptSetName].dPtdDV = dPtdDV
+            else:
+                dPtdDV = self.points[ptSetName].dPtdDV
+
+            dIdx_local = np.tensordot(dIdpt, dPtdDV, axes=([1,2],[1,2]))
 
             # multiply with didpt
             if comm:  # If we have a comm, globaly reduce with sum
@@ -226,12 +228,11 @@ class DVGeometryTransform:
                 dIdxArray = dIdx_local
 
             # Now convert to dict and save
-            dIdxDict.update(self.convertSensitivityToDict(dIdxArray))
+            dIdxDict.update(transFunc.convertSensitivityToDict(dIdxArray))
 
             # rotate the didpt so that its in dvgeo reference
             for ifunc in range(N):
                 dIdpt[ifunc] = transFunc.sens(dIdpt[ifunc])
-
 
         # process the top dvgeo derivatives
         # combine dictionaries and return
@@ -320,6 +321,7 @@ class TransformationFunc:
         self.funcCallback = funcCallback
 
         self.name = name
+        self.isComplex = False
 
     def addDV(self, dvName, value, lower, upper, scale, config, prependName):
         # if the parent DVGeometry object has a name attribute, prepend it
@@ -339,7 +341,7 @@ class TransformationFunc:
 
         for key in dvDict:
             if key in self.dvDict:
-                vals_to_set = np.atleast_1d(dvDict[key]).astype("D")
+                vals_to_set = np.atleast_1d(dvDict[key])
                 _checkArrLength(key, len(vals_to_set), self.dvDict[key].nVal)
                 self.dvDict[key].value = vals_to_set
 
@@ -376,7 +378,10 @@ class TransformationFunc:
     def getJacobian(self, pointsBase, config=None):
         # get the dv jacobian for this ptset
         dh = 1e-40
-        xdv = copy.deepcopy(self.getValues())
+        xdvCmplx = copy.deepcopy(self.getValues())
+        # cast DVs to complex for CS
+        for key, val in xdvCmplx.items():
+            xdvCmplx[key] = val.astype("D")
         # allocate the jacobian
         npts = pointsBase.shape[0]
         dPtdDV = np.zeros((self.getNDV(), npts, 3))
@@ -387,15 +392,15 @@ class TransformationFunc:
             dv = self.dvDict[key]
             for jj in range(dv.nVal):
                 # copy the current value
-                refVal = xdv[key][jj]
+                refVal = xdvCmplx[key][jj]
                 # perturb
-                xdv[key][jj] = refVal + dh * 1j
+                xdvCmplx[key][jj] = refVal + dh * 1j
                 # evaluate
-                pointsPlus = self.funcCallback(pointsBase, mode="fwd", applyDisplacement=True, config=config, dvDict=xdv)
+                pointsPlus = self.funcCallback(pointsBase, mode="fwd", applyDisplacement=True, config=config, dvDict=xdvCmplx)
                 # set in the jacobian matrix
                 dPtdDV[ii + jj] = np.imag(pointsPlus) / dh
                 # reset the value
-                xdv[key][jj] = refVal
+                xdvCmplx[key][jj] = refVal
 
             ii += dv.nVal
 
@@ -482,3 +487,4 @@ class PointSet:
         self.pointsBase = pointsBase
         self.nPts = len(self.pointsBase)
         self.transformationFunc = transformationFunc
+        self.dPtdDV = None
