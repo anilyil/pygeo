@@ -10,3 +10,4 @@ from .parameterization import DVGeometryCST
 from .parameterization import DVGeometryVSP
 from .parameterization import DVGeometryESP
 from .parameterization import DVGeometryMulti
+from .parameterization import DVGeometryTransform
