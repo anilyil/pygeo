@@ -56,6 +56,8 @@ class DVGeometryTransform:
         # we run the transformation function before passing to DVGeo Top
         if transformationFunc is not None:
             tfunc = self.transormationFuncs[transformationFunc]
+            if "baselineDVs" not in kwargs:
+                raise Error("'baselineDVs' must be provided in the kwargs if this pointset uses a transfer function")
             baselineDVs = kwargs.pop("baselineDVs")
             # save the current DVs
             DVRef = copy.deepcopy(tfunc.getValues())
