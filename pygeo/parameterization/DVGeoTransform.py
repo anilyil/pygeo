@@ -26,7 +26,6 @@ class DVGeometryTransform:
         If True, checks for duplicate design variable names across components. Defaults to True.
     """
 
-
     def __init__(self, DVGeoTop, name=None, checkDVs=True):
 
         self.name = name
@@ -58,7 +57,9 @@ class DVGeometryTransform:
         # save the info in the dictionary
         self.transormationFuncs[funcName] = TransformationFunc(funcName, funcCallback)
 
-    def addTransformationDV(self, funcName, dvName, value, lower=None, upper=None, scale=1.0, config=None, prependName=True):
+    def addTransformationDV(
+        self, funcName, dvName, value, lower=None, upper=None, scale=1.0, config=None, prependName=True
+    ):
         """
         Add a design variable (DV) for a specific transformation function.
 
@@ -134,7 +135,9 @@ class DVGeometryTransform:
 
             # Check for baseline design variables in kwargs
             if "baselineDVs" not in kwargs:
-                raise Error("'baselineDVs' must be provided in the kwargs if this pointset uses a transformation function.")
+                raise Error(
+                    "'baselineDVs' must be provided in the kwargs if this pointset uses a transformation function."
+                )
 
             baselineDVs = kwargs.pop("baselineDVs")
 
