@@ -55,7 +55,15 @@ class DVGeometryTransform:
 
         # we run the transformation function before passing to DVGeo Top
         if transformationFunc is not None:
-            pointsBase = self.transormationFuncs[transformationFunc].update(points, "bwd", config=config)
+            tfunc = self.transormationFuncs[transformationFunc]
+            baselineDVs = kwargs.pop("baselineDVs")
+            # save the current DVs
+            DVRef = copy.deepcopy(tfunc.getValues())
+            # set the baseline values
+            tfunc.setDesignVars(baselineDVs)
+            pointsBase = tfunc.update(points, "bwd", config=config)
+            # set the reference back
+            tfunc.setDesignVars(DVRef)
         else:
             pointsBase = points
 
