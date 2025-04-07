@@ -319,19 +319,18 @@ class DVGeometryTransform:
 
         return nDV
 
-    def getVarNames(self, pyOptSparse=False):
+    def getVarNames(self, **kwargs):
         """
         Retrieve a list of design variable names.
 
-        This method returns the names of all design variables managed by the DVGeometryTransform
-        object. It includes variables from both the top-level DVGeometry object and all associated
-        transformation functions. The output can be used for specifying optimization constraints
-        or objectives in pyOptSparse.
+        This method returns the names of all design variables managed by the DVGeometryTransform object.
+        It includes variables from both the top-level DVGeometry object and all associated transformation functions.
 
         Parameters
         ----------
-        pyOptSparse : bool, optional
-            If True, the returned list is formatted for use with pyOptSparse. Defaults to False.
+        kwargs : dict
+            Additional keyword arguments forwarded to the top-level DVGeometry object's `getVarNames` method.
+            For example, `pyOptSparse=True` can be passed to format variable names for pyOptSparse.
 
         Returns
         -------
@@ -340,10 +339,10 @@ class DVGeometryTransform:
 
         Examples
         --------
-        >>> optProb.addCon(..., wrt=DVGeo.getVarNames())
+        >>> optProb.addCon(..., wrt=DVGeo.getVarNames(pyOptSparse=True))
         """
-        # Start by retrieving variable names from the top-level DVGeometry object
-        dvNames = self.DVGeoTop.getVarNames()
+        # Retrieve variable names from the top-level DVGeometry object, passing kwargs
+        dvNames = self.DVGeoTop.getVarNames(**kwargs)
 
         # Append variable names from each transformation function
         for transFunc in self.transormationFuncs.values():
