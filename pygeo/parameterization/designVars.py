@@ -369,3 +369,21 @@ class cstDV(geoDV):
         """
         super().__init__(name=name, value=value, nVal=nVal, lower=lower, upper=upper, scale=scale)
         self.type = dvType
+
+
+class geoDVTransformation(geoDV):
+    def __init__(self, name, value, lower, upper, scale, config):
+        """
+        Internal class for storing transformation design variable information
+        """
+        value = np.atleast_1d(np.array(value)).astype("d")
+        super().__init__(
+            name=name,
+            value=value,
+            nVal=len(value),
+            lower=lower,
+            upper=upper,
+            scale=scale,
+        )
+
+        self.config = config

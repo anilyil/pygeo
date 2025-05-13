@@ -4,3 +4,4 @@ from .DVGeoCST import DVGeometryCST
 from .DVGeoVSP import DVGeometryVSP
 from .DVGeoESP import DVGeometryESP
 from .DVGeoMulti import DVGeometryMulti
+from .DVGeoTransform import DVGeometryTransform
