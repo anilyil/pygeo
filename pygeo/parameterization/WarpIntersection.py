@@ -173,10 +173,7 @@ class WarpedIntersection:
                 # comp B owns this point
                 dStar = self.dStarB
 
-            # then get the halfdStar for that component
-            halfdStar = dStar / 2.0
-
-            if d[i] < dStar:
+            if dStar is not None and d[i] < dStar:
                 x = d[i] / dStar
                 x3 = x * x * x
                 x4 = x3 * x
@@ -212,6 +209,22 @@ class WarpedIntersection:
         """Update the delta in ptSetName with our correction. The delta need
         to be supplied as we will be changing it and returning them
         """
+
+        # first figure out if any of the dStars is set to None. this will trigger a modified algorithm
+        if self.dStarA is None and self.dStarB is None:
+            # this should not happen, we can only set one to None. error out
+            raise Error("both dStarA and dStarB cannot be set to None. Either set one of them to None or neither to None.")
+        elif self.dStarA is None or self.dStarB is None:
+            # this means we are using the modified algorithm, modify the delta multipliers
+            # this works because the component with a None dStar does not get any warped points
+            deltaFull = 0.0
+            deltaWarp = 1.0
+        else:
+            # this is the baseline algorithm. the math we ultimately want is:
+            # delta[j] += (1 - factors[i]) * interp
+            # to achieve this, modify the factors
+            deltaFull = 1.0
+            deltaWarp = 0.0
 
         # original coordinates of the added pointset
         pts = self.points[ptSetName]["pts"]
@@ -319,13 +332,29 @@ class WarpedIntersection:
 
             # Now the delta is replaced by 1-factor times the weighted
             # interp of the seam * factor of the original:
-            delta[j] += (1 - factors[i]) * interp
+            delta[j] = delta[j] * deltaFull + delta[j] * factors[i] * deltaWarp + (1 - factors[i]) * interp
 
         return delta
 
     def sens(self, dIdPt, ptSetName, comm, config):
         # Return the reverse accumulation of dIdpt on the seam
         # nodes. Also modifies the dIdp array accordingly.
+
+        # first figure out if any of the dStars is set to None. this will trigger a modified algorithm
+        if self.dStarA is None and self.dStarB is None:
+            # this should not happen, we can only set one to None. error out
+            raise Error("both dStarA and dStarB cannot be set to None. Either set one of them to None or neither to None.")
+        elif self.dStarA is None or self.dStarB is None:
+            # this means we are using the modified algorithm, modify the delta multipliers
+            # this works because the component with a None dStar does not get any warped points
+            deltaFull = 0.0
+            deltaWarp = 1.0
+        else:
+            # this is the baseline algorithm. the math we ultimately want is:
+            # delta[j] += (1 - factors[i]) * interp
+            # to achieve this, modify the factors
+            deltaFull = 1.0
+            deltaWarp = 0.0
 
         # original coordinates of the added pointset
         pts = self.points[ptSetName]["pts"]
@@ -415,6 +444,9 @@ class WarpedIntersection:
 
                     # seeds for the r1 point
                     seamBar[k, conn[:, 1], iDim] += localVal[iDim] * eval2 / den
+
+                # we need to modify dIdPt as well, based on what warping mode we are in
+                dIdPt[k, j, :] = dIdPt[k, j, :] * deltaFull + dIdPt[k, j, :] * deltaWarp * factors[i]
 
         # seamBar is the bwd seeds for the intersection curve...
         # it is N,nseampt,3 in size

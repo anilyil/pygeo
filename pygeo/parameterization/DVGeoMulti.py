@@ -349,7 +349,7 @@ class DVGeometryMulti:
             Must be in Plot3D format.
 
         dStarA : float, optional
-            Distance from the intersection over which the inverse-distance deformation is applied on compA.
+            Distance from the intersection over which the inverse-distance deformation is applied on compA. If one of the dStar values is set to None, the algorithm is slightly modified. In this case, we let the component with a dStar of None to maintain the changes from its own FFD, while the other component observes a decay in its own FFD changes leading up to the intersection. The intersection purely follows the component with dStar of None in this case.
 
         dStarB : float, optional
             Distance from the intersection over which the inverse-distance deformation is applied on compB.
