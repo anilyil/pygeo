@@ -23,7 +23,7 @@ setup(
     url="https://github.com/mdolab/pygeo",
     license="Apache License Version 2.0",
     packages=find_packages(include=["pygeo*"]),
-    install_requires=["numpy>=1.21", "pyspline>=1.1", "scipy>=1.7", "mpi4py>=3.1.5", "mdolab-baseclasses", "packaging"],
+    install_requires=["numpy>=1.21", "pyspline>=1.1", "scipy>=1.7", "mpi4py>=3.1.4", "mdolab-baseclasses", "packaging"],
     extras_require={
         "testing": ["numpy-stl", "parameterized", "testflo", "psutil"],
         "mphys": ["openmdao>=3.25"],
