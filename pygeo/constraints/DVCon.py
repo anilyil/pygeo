@@ -640,6 +640,7 @@ class DVConstraints:
         axis,
         lower=1.0,
         upper=3.0,
+        kPolyLine=2,
         scaled=True,
         scale=1.0,
         name=None,
@@ -694,6 +695,14 @@ class DVConstraints:
             The upper bound for the constraint. A single float will
             apply the same bounds to all constraints, while the array
             option will use different bounds for each constraint.
+
+        kPolyLine: int
+            The order of the poly-line used to define the thickness
+            constraints. This is the order of the B-spline curve that
+            represnts the poly-line. By default kPolyLine=2, which
+            results in a piecewise linear poly-line. If kPolyLine=4,
+            the poly-line is a cubic B-spline. The number of points in
+            ptList must be at least kPolyLine.
 
         scaled : bool
             Flag specifying whether or not the constraint is to be
@@ -756,7 +765,9 @@ class DVConstraints:
         p0, p1, p2 = self._getSurfaceVertices(surfaceName=surfaceName)
 
         # Create mesh of intersections
-        constr_line = Curve(X=ptList, k=2)
+        assert kPolyLine >= 2, "Order of poly line must be at least 2"
+        assert len(ptList) >= kPolyLine, "Number of points in ptList must be at least kPolyLine"
+        constr_line = Curve(X=ptList, k=kPolyLine)
         s = np.linspace(0, 1, nCon)
         X = constr_line(s)
         X = np.atleast_2d(X)
