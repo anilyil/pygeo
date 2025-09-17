@@ -191,6 +191,8 @@ class DVGeometryMulti:
         remeshBwd=True,
         anisotropy=[1.0, 1.0, 1.0],
         blendOrder=3,
+        intersectionCurves=None,
+        eps=1e-30,
     ):
         """
         Method that defines intersections between components.
@@ -280,6 +282,11 @@ class DVGeometryMulti:
             A unique benefit of the cubic blend is that it will maintain G2 continuity of the affected area and its boundaries.
             # TODO check if this last statement is true. maybe we can modify the functions so that any order higher than 2-3 results in continuous curvature
 
+        intersectionCurves : list, optional
+            List of feature curves that we use to track the intersection topology.
+            If this is not provided, we use all of the curves on compB that also have a "marchDir.
+            If this list is provided, we internally use this set of curves when determining the intersection topology.
+
         """
 
         # Assign mutable defaults
@@ -293,6 +300,8 @@ class DVGeometryMulti:
             trackSurfaces = {}
         if excludeSurfaces is None:
             excludeSurfaces = {}
+        if intersectionCurves is None:
+            intersectionCurves = {}
 
         nIC = len(self.intersectComps)
 
@@ -315,11 +324,13 @@ class DVGeometryMulti:
                 trackSurfaces,
                 excludeSurfaces,
                 remeshBwd,
+                intersectionCurves,
                 anisotropy,
                 blendOrder,
                 self.debug,
                 self.dtype,
                 nIC,
+                eps,
             )
         )
 

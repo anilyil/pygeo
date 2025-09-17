@@ -46,11 +46,13 @@ class ComponentIntersection:
         trackSurfaces,
         excludeSurfaces,
         remeshBwd,
+        intersectionCurves,
         anisotropy,
         blendOrder,
         debug,
         dtype,
         idx,
+        eps,
     ):
         """
         Class to store information required for an intersection.
@@ -82,7 +84,7 @@ class ComponentIntersection:
         self.comm.Barrier()
 
         # define epsilon as a small value to prevent division by zero in the inverse distance computation
-        self.eps = 1e-20
+        self.eps = eps
 
         # counter for outputting curves etc at each update
         self.counter = 0
@@ -237,6 +239,20 @@ class ComponentIntersection:
 
                 # save the new connectivity
                 curveComp.barsConn[curveName] = newConn
+
+        # figure out what curves we use to determine the intersection topology
+        if intersectionCurves:
+            # a full list is provided, we need to check if any of these are in remeshAll
+            for curveName in intersectionCurves:
+                if curveName in self.remeshAll:
+                    raise Error(f"Curve {curveName} is provided in the intersectionCurves list but it does not have a marchDist provided. For this curve to be used in the intersection topology, you need to provide a marching direction for it as well.")
+        else:
+            # we get curves from compB that are not in remeshAll
+            for curveName in self.featureCurveNames:
+                if curveName in self.compB.barsConn and curveName not in self.remeshAll:
+                    intersectionCurves.append(curveName)
+
+        self.intersectionCurves = intersectionCurves
 
         self.distTol = distTol
 
@@ -1673,9 +1689,14 @@ class ComponentIntersection:
             self.seamDict[curveName] = {}
 
             # if this curve is on compB, we use it to track intersection features
-            if curveName in self.compB.barsConn and curveName not in self.remeshAll:
+            if curveName in self.intersectionCurves:
                 # get the curve connectivity
-                curveConn = self.compB.barsConn[curveName]
+                if curveName in self.compB.barsConn:
+                    curveConn = self.compB.barsConn[curveName]
+                    curveNodes = self.compB.nodes
+                else:
+                    curveConn = self.compA.barsConn[curveName]
+                    curveNodes = self.compA.nodes
 
                 # Use pySurf to project the point on curve
                 # First, we need to get a list of nodes that define the intersection
@@ -1702,7 +1723,7 @@ class ComponentIntersection:
                         elemIDs + 1
                     )  # (we need to do this separetely because Fortran will actively change elemIDs contents.
                     curveMask = self.curveSearchAPI.mindistancecurve(
-                        intNodesOrd.T, self.compB.nodes.T, curveConn.T + 1, xyzProj.T, tanProj.T, dist2, elemIDs
+                        intNodesOrd.T, curveNodes.T, curveConn.T + 1, xyzProj.T, tanProj.T, dist2, elemIDs
                     )
 
                     # Adjust indices back to Python standards
@@ -1726,7 +1747,7 @@ class ComponentIntersection:
                 curveBegCoor[curveName] = xyzProj[np.argmin(dist2)]
 
             else:
-                # if it is not on compB, we still need to set up some variables so that we remesh the whole curve
+                # if it is not an intersection topo curve, we still need to set up some variables so that we remesh the whole curve
                 # set the beginning to the first element
                 curveBeg[curveName] = 0
 
@@ -1863,9 +1884,9 @@ class ComponentIntersection:
                 # this has to be on compB
                 if curveName in curveBegCoor:
                     # save the original coordinate of the first point
-                    ptBegSave = self.compB.nodes[curveConn[elemBeg, 0]].copy()
+                    ptBegSave = curveComp.nodes[curveConn[elemBeg, 0]].copy()
                     # and replace this with the starting point we want
-                    self.compB.nodes[curveConn[elemBeg, 0]] = curveBegCoor[curveName].copy()
+                    curveComp.nodes[curveConn[elemBeg, 0]] = curveBegCoor[curveName].copy()
 
                 # compute the element lengths starting from elemBeg
                 firstNodes = curveComp.nodes[curveConn[elemBeg:, 0]]
@@ -2105,9 +2126,9 @@ class ComponentIntersection:
                 # adjust the first coordinate of the curve
                 if curveName in curveBegCoor:
                     # save the original coordinate of the first point
-                    ptBegSave = self.compB.nodes[curveConn[elemBeg, 0]].copy()
+                    ptBegSave = curveComp.nodes[curveConn[elemBeg, 0]].copy()
                     # and replace this with the starting point we want
-                    self.compB.nodes[curveConn[elemBeg, 0]] = curveBegCoor[curveName].copy()
+                    curveComp.nodes[curveConn[elemBeg, 0]] = curveBegCoor[curveName].copy()
 
                 # get the coordinates of points
                 coor = curveComp.nodes
@@ -2180,7 +2201,7 @@ class ComponentIntersection:
                     cb[:, curveConn[elemBeg, 0], :] = np.zeros((N, 3))
 
                     # put the modified initial and final points back in place.
-                    self.compB.nodes[curveConn[elemBeg, 0]] = ptBegSave.copy()
+                    curveComp.nodes[curveConn[elemBeg, 0]] = ptBegSave.copy()
 
                     # we need to call the curve projection routine to propagate the seed...
                     intNodesOrd = self.seamDict[curveName]["intNodesOrd"]
@@ -2205,7 +2226,7 @@ class ComponentIntersection:
 
                         xyzb_new, coorb_new = self.curveSearchAPI.mindistancecurve_b(
                             intNodesOrd.T,
-                            self.compB.nodes.T,
+                            curveComp.nodes.T,
                             barsConn.T + 1,
                             xyzProj.T,
                             xyzProjb.T,
