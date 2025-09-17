@@ -2237,7 +2237,7 @@ class ComponentIntersection:
                         )
 
                         # add the coorb_new to coorBb[ii] since coorb_new has the seeds from mindistancecurve_b
-                        coorBb[ii] += coorb_new.T
+                        coorb[ii] += coorb_new.T
 
                         # xyzb_new is the seed for the intersection seam node
                         # instead of saving the array full of zeros, we just save the entry we know is nonzero
