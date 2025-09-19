@@ -72,7 +72,7 @@ class DVGeometryMulti:
             self.dtype = float
             self.adtAPI = adtAPI.adtapi
 
-    def addComponent(self, comp, DVGeo, triMesh=None, scale=1.0, bbox=None, pointSetKwargs=None):
+    def addComponent(self, comp, DVGeo, triMesh=None, scale=1.0, bbox=None, pointSetKwargs=None, supportCurves=None):
         """
         Method to add components to the DVGeometryMulti object.
 
@@ -106,6 +106,8 @@ class DVGeometryMulti:
             bbox = {}
         if pointSetKwargs is None:
             pointSetKwargs = {}
+        if supportCurves is None:
+            supportCurves = {}
 
         if triMesh is not None:
             # We also need to read the triMesh and save the points
@@ -113,6 +115,19 @@ class DVGeometryMulti:
 
             # scale the nodes
             nodes *= scale
+
+            # also read the support curves if we have any
+            for scName, scData in supportCurves.items():
+                scNodes = scData["nodes"]
+                scConn = scData["conn"]
+
+                # increment the conn by this number
+                nNode = len(nodes)
+                scConn += nNode
+                # save the conn array
+                barsConn[scName] = scConn
+                # append the nodes to the node array
+                nodes = np.vstack([nodes, scNodes])
 
             # We will split up the points by processor when adding them to the component DVGeo
 
@@ -193,6 +208,7 @@ class DVGeometryMulti:
         blendOrder=3,
         intersectionCurves=None,
         eps=1e-30,
+        supportCurves=None,  # TODO Exclude from projections
     ):
         """
         Method that defines intersections between components.
@@ -302,6 +318,8 @@ class DVGeometryMulti:
             excludeSurfaces = {}
         if intersectionCurves is None:
             intersectionCurves = {}
+        if supportCurves is None:
+            supportCurves = {}
 
         nIC = len(self.intersectComps)
 
@@ -319,6 +337,7 @@ class DVGeometryMulti:
                 marchDir,
                 includeCurves,
                 slidingCurves,
+                supportCurves,
                 intDir,
                 curveEpsDict,
                 trackSurfaces,

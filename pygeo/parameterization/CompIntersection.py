@@ -41,6 +41,7 @@ class ComponentIntersection:
         marchDir,
         includeCurves,
         slidingCurves,
+        supportCurves,
         intDir,
         curveEpsDict,
         trackSurfaces,
