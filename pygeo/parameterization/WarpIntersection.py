@@ -398,9 +398,9 @@ class WarpedIntersection:
             # we flip this around here.
             # for points on compA, we use the compB deltas, and vice versa
             if j in compMap[self.compA.name]:
-                seamBar = seamABar
-            else:
                 seamBar = seamBBar
+            else:
+                seamBar = seamABar
 
             # coordinates of the original point
             rp = pts[j]
