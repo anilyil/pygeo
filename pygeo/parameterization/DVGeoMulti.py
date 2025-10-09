@@ -317,6 +317,7 @@ class DVGeometryMulti:
         if excludeSurfaces is None:
             excludeSurfaces = {}
         if intersectionCurves is None:
+            # TODO this breaks if its not provided
             intersectionCurves = {}
         if supportCurves is None:
             supportCurves = {}

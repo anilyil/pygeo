@@ -248,6 +248,7 @@ class ComponentIntersection:
                 if curveName in self.remeshAll:
                     raise Error(f"Curve {curveName} is provided in the intersectionCurves list but it does not have a marchDist provided. For this curve to be used in the intersection topology, you need to provide a marching direction for it as well.")
         else:
+            # TODO is this a list or dict?
             # we get curves from compB that are not in remeshAll
             for curveName in self.featureCurveNames:
                 if curveName in self.compB.barsConn and curveName not in self.remeshAll:
