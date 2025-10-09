@@ -545,7 +545,7 @@ class ComponentIntersection:
                     if self.debug:
                         ptCoords = ptsToCurves[idxs]
                         tecplot_interface.write_tecplot_scatter(
-                            f"{self.debug_dir}/{curveName}{self.curConfigText}.plt", curveName, ["X", "Y", "Z"], ptCoords
+                            f"{self.debug_dir}/{curveName}_iter{self.counter}{self.curConfigText}.plt", curveName, ["X", "Y", "Z"], ptCoords
                         )
 
                     # also update the masking array
@@ -845,7 +845,7 @@ class ComponentIntersection:
 
             if self.debug:
                 tecplot_interface.write_tecplot_scatter(
-                    f"{self.debug_dir}/{curveName}_warped_pts{self.curConfigText}.plt", "intersection", ["X", "Y", "Z"], ptsOnCurve
+                    f"{self.debug_dir}/{curveName}_warped_pts_iter{self.counter}{self.curConfigText}.plt", "intersection", ["X", "Y", "Z"], ptsOnCurve
                 )
 
             # conn of the current curve
@@ -897,7 +897,7 @@ class ComponentIntersection:
 
             if self.debug:
                 tecplot_interface.write_tecplot_scatter(
-                    f"{self.debug_dir}/{curveName}_projected_pts{self.curConfigText}.plt", curveName, ["X", "Y", "Z"], xyzProj
+                    f"{self.debug_dir}/{curveName}_projected_pts_iter{self.counter}{self.curConfigText}.plt", curveName, ["X", "Y", "Z"], xyzProj
                 )
 
             # update the point coordinates on this processor.
@@ -1622,7 +1622,7 @@ class ComponentIntersection:
             if self.intDir is None:
                 # we have multiple intersection curves but the user did not specify which direction to pick
                 for i in range(len(newConn)):
-                    curvename = f"{self.debug_dir}/{self.compA.name}_{self.compB.name}_{i}{self.curConfigText}"
+                    curvename = f"{self.debug_dir}/intersection_segments_{self.compA.name}_{self.compB.name}_seg{i}_iter{self.counter}{self.curConfigText}"
                     tecplot_interface.writeTecplotFEdata(intNodes, newConn[i], curvename, curvename)
                 raise Error(
                     f"More than one intersection curve between comps {self.compA.name} and {self.compB.name}. "
@@ -1827,7 +1827,7 @@ class ComponentIntersection:
 
         # Output the intersection curve
         if self.comm.rank == 0 and self.debug:
-            curvename = f"{self.debug_dir}/{self.compA.name}_{self.compB.name}_{self.counter}{self.curConfigText}"
+            curvename = f"{self.debug_dir}/remeshed_intersection_curve_{self.compA.name}_{self.compB.name}_iter{self.counter}{self.curConfigText}"
             tecplot_interface.writeTecplotFEdata(intNodes, seamConn, curvename, curvename)
 
         # we need to re-mesh feature curves if the user wants...
@@ -2023,7 +2023,7 @@ class ComponentIntersection:
 
             # Output the feature curves
             if self.comm.rank == 0 and self.debug:
-                curvename = f"{self.debug_dir}/featureCurves_{self.counter}{self.curConfigText}"
+                curvename = f"{self.debug_dir}/remeshed_featureCurves_iter{self.counter}{self.curConfigText}"
                 tecplot_interface.writeTecplotFEdata(remeshedCurves, remeshedCurveConnFull, curvename, curvename)
 
             # now we are done going over curves,
@@ -2349,7 +2349,7 @@ class ComponentIntersection:
         if self.debug:
             data = [np.append(points[i], surfaceDist[i]) for i in surfaceIndMap]
             tecplot_interface.write_tecplot_scatter(
-                f"{self.debug_dir}/{surface}_points_{self.comm.rank}{self.curConfigText}.plt", f"{surface}", ["X", "Y", "Z", "dist"], data
+                f"{self.debug_dir}/{surface}_points_{self.comm.rank}_iter{self.counter}{self.curConfigText}.plt", f"{surface}", ["X", "Y", "Z", "dist"], data
             )
 
         # Save the indices only if there is at least one point
