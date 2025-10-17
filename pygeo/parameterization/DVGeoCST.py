@@ -20,13 +20,13 @@ try:
 except ImportError:
     prefoilInstalled = False
 
-try:
-    # External modules
-    import matplotlib.pyplot as plt
+# try:
+#     # External modules
+#     import matplotlib.pyplot as plt
 
-    pltImport = True
-except ImportError:
-    pltImport = False
+#     pltImport = True
+# except ImportError:
+pltImport = False
 
 # Local modules
 from .BaseDVGeo import BaseDVGeometry
